@@ -1041,6 +1041,72 @@ BEGIN
 
 
   -- =========================================================================
+  -- PHASE 5g (Appeal outcome / Task 018C): reporting-only derivation of the
+  -- appeal disposition from active record_appeal_outcome resolutions.
+  --
+  -- Gate: a non-superseded record_appeal_outcome row in _fte_active_resolutions
+  -- (Phase 0.5). Supported outcomes: upheld / denied / partial (migration 013).
+  --
+  -- REPORTING-ONLY: this phase emits NO claim events and makes NO change to
+  -- open_balance, denied_amount, recovered_amount, written_off_amount,
+  -- reconciliation_status, or event emission. A valid outcome is accepted with no
+  -- effect — its value is read from fte_review_resolutions by explain (Task 018D).
+  -- Only anomalies are surfaced, non-destructively, through the existing
+  -- fte_review_queue mechanism (reason 'conflicting_observations' + a descriptor
+  -- in details):
+  --   * an outcome recorded for a claim with NO prior appeal_filed event, and
+  --   * conflicting active outcomes (more than one distinct outcome per claim).
+  -- An outcome never drives write-off, recovery, or a status change.
+  -- =========================================================================
+  DECLARE
+    v_ao record;
+  BEGIN
+    FOR v_ao IN (
+      SELECT ar.claim_id,
+             COUNT(DISTINCT ar.appeal_outcome) AS distinct_outcomes,
+             MIN(ar.id::text)                  AS any_resolution_id
+      FROM _fte_active_resolutions ar
+      WHERE ar.action   = 'record_appeal_outcome'
+        AND ar.claim_id IS NOT NULL
+        AND EXISTS (
+          SELECT 1 FROM fte_claims c
+          WHERE c.id = ar.claim_id AND c.practice_id = p_practice_id
+        )
+      GROUP BY ar.claim_id
+    ) LOOP
+
+      -- Anomaly 1: outcome recorded without a prior appeal_filed event.
+      IF NOT EXISTS (
+        SELECT 1 FROM fte_claim_events ce
+        WHERE ce.practice_id = p_practice_id
+          AND ce.claim_id    = v_ao.claim_id
+          AND ce.event_type  = 'appeal_filed'
+      ) THEN
+        INSERT INTO fte_review_queue (practice_id, claim_id, reason, status, details)
+        VALUES (p_practice_id, v_ao.claim_id, 'conflicting_observations', 'open',
+          jsonb_build_object('anomaly', 'appeal_outcome_without_appeal',
+            'action', 'record_appeal_outcome', 'resolution_id', v_ao.any_resolution_id));
+        CONTINUE;
+      END IF;
+
+      -- Anomaly 2: conflicting active outcomes for the same claim.
+      IF v_ao.distinct_outcomes > 1 THEN
+        INSERT INTO fte_review_queue (practice_id, claim_id, reason, status, details)
+        VALUES (p_practice_id, v_ao.claim_id, 'conflicting_observations', 'open',
+          jsonb_build_object('anomaly', 'conflicting_appeal_outcome',
+            'action', 'record_appeal_outcome', 'distinct_outcomes', v_ao.distinct_outcomes));
+        CONTINUE;
+      END IF;
+
+      -- Valid: exactly one distinct outcome + a prior appeal_filed. Reporting-only;
+      -- no event, accounting, or status effect (explain reads the resolution).
+      NULL;
+
+    END LOOP;
+  END;
+
+
+  -- =========================================================================
   -- PHASE 6: Derive financial positions.
   --
   -- A position row is created for every claim that has at least one emitted
