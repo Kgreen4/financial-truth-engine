@@ -19,7 +19,7 @@
 --   returns partial JSON with null monetary fields and an advisory summary.
 --   Does not raise an exception.
 --
--- Prerequisites: migrations 001–011 applied; fte_reconcile_practice registered.
+-- Prerequisites: migrations 001–012 applied; fte_reconcile_practice registered.
 -- Run as a database role with ordinary read access to the FTE tables in the target environment.
 -- =============================================================================
 
@@ -34,6 +34,7 @@ AS $$
 DECLARE
   v_claim       record;
   v_pos         record;
+  v_life        record;
   v_events      jsonb;
   v_evidence    jsonb;
   v_review      jsonb;
@@ -65,11 +66,31 @@ BEGIN
          fp.patient_responsibility_amount,
          fp.denied_amount,
          fp.recoverable_amount,
+         fp.recovered_amount,
+         fp.written_off_amount,
          fp.open_balance_amount
   INTO   v_pos
   FROM   fte_financial_positions fp
   WHERE  fp.practice_id = p_practice_id
     AND  fp.claim_id    = p_claim_id;
+
+  -- =========================================================================
+  -- Step 2b (Task 017D): denial-lifecycle aggregates from claim_events history.
+  -- gross_denied is summed from denial_posted event amounts (NOT net position
+  -- math), so it reflects the total denial before any recovery/write-off
+  -- reclassification. Counts drive the appeal marker and lifecycle summary.
+  -- Aggregate query: always returns one row; gross_denied is NULL when there
+  -- are no denial_posted events for the claim.
+  -- =========================================================================
+  SELECT
+    SUM(ce.amount) FILTER (WHERE ce.event_type = 'denial_posted')      AS gross_denied,
+    COUNT(*)       FILTER (WHERE ce.event_type = 'appeal_filed')       AS appeal_ct,
+    COUNT(*)       FILTER (WHERE ce.event_type = 'recovery_received')  AS recovery_ct,
+    COUNT(*)       FILTER (WHERE ce.event_type = 'write_off_approved') AS writeoff_ct
+  INTO   v_life
+  FROM   fte_claim_events ce
+  WHERE  ce.practice_id = p_practice_id
+    AND  ce.claim_id    = p_claim_id;
 
   -- =========================================================================
   -- Step 3: Build events array.
@@ -207,6 +228,32 @@ BEGIN
                                            ELSE to_char(GREATEST(0, v_pos.denied_amount
                                                         - COALESCE(v_pos.recoverable_amount, 0)),
                                                         'FM999999999999990.00') END,
+    -- --- Denial lifecycle reporting (Task 017D) — additive, reporting-only ---
+    -- denied_amount above is NET after 017C (gross - recovered - written_off).
+    -- gross_denied_amount is derived from denial_posted event history so callers
+    -- can see the pre-reclassification total alongside the net figure.
+    'gross_denied_amount',            CASE WHEN v_life.gross_denied IS NULL THEN NULL
+                                           ELSE to_char(v_life.gross_denied, 'FM999999999999990.00') END,
+    'recovered_amount',               CASE WHEN v_pos IS NULL THEN NULL
+                                           ELSE to_char(v_pos.recovered_amount, 'FM999999999999990.00') END,
+    'written_off_amount',             CASE WHEN v_pos IS NULL THEN NULL
+                                           ELSE to_char(v_pos.written_off_amount, 'FM999999999999990.00') END,
+    -- remaining_recoverable_amount: recoverable overlay (gross-based; unchanged
+    -- by 017C) minus what has already been recovered, floored at 0. recovered is
+    -- subtracted exactly once (recoverable is NOT net after 017C). NULL when the
+    -- claim has no denials (recoverable_amount NULL).
+    'remaining_recoverable_amount',   CASE WHEN v_pos IS NULL OR v_pos.recoverable_amount IS NULL THEN NULL
+                                           ELSE to_char(GREATEST(0, v_pos.recoverable_amount
+                                                        - COALESCE(v_pos.recovered_amount, 0)),
+                                                        'FM999999999999990.00') END,
+    -- appeal_filed: reporting marker only (an appeal_filed event exists); it
+    -- implies NO accounting change.
+    'appeal_filed',                   COALESCE(v_life.appeal_ct, 0) > 0,
+    'lifecycle_event_counts',         jsonb_build_object(
+                                        'appeal_filed',       COALESCE(v_life.appeal_ct, 0),
+                                        'recovery_received',  COALESCE(v_life.recovery_ct, 0),
+                                        'write_off_approved', COALESCE(v_life.writeoff_ct, 0)
+                                      ),
     'open_balance_amount',            CASE WHEN v_pos IS NULL THEN NULL
                                            ELSE to_char(v_pos.open_balance_amount, 'FM999999999999990.00') END,
     'summary',                        v_summary,
