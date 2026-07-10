@@ -2,9 +2,16 @@
 -- Financial Truth Engine — Claim Explanation Function Validation
 -- tests/validate_explain_claim.sql
 --
--- 26 PASS checks verifying fte_explain_claim (Task 006D; extended in 014E2 for
+-- 32 PASS checks verifying fte_explain_claim (Task 006D; extended in 014E2 for
 -- the E2 / denial / recoverable ledger fields; extended in 017D for the
--- denial-lifecycle reporting fields).
+-- denial-lifecycle reporting fields; extended in 018D for appeal_outcome).
+--
+-- CHECK 27  AOU upheld appeal outcome surfaced
+-- CHECK 28  AOD denied appeal outcome surfaced
+-- CHECK 29  AOP partial appeal outcome surfaced
+-- CHECK 30  no recorded outcome -> appeal_outcome null (key present)
+-- CHECK 31  prior lifecycle explain fields still present
+-- CHECK 32  outcome is reporting-only: accounting fields unchanged
 --
 -- CHECK 15  no-denial claim: denied/recoverable/nonrecoverable are null
 -- CHECK 16  explanation surfaces allowed/patient_responsibility/denied/recoverable keys
@@ -40,7 +47,7 @@
 --             CLM-P3A-0003 (c3a00000-0000-4000-8000-000000000003) — unbalanced
 --
 -- Prerequisites:
---   1. migrations 001–012 applied
+--   1. migrations 001–013 applied
 --   2. reconciler/fte_reconcile.sql registered (CREATE OR REPLACE)
 --   3. reconciler/fte_explain_claim.sql registered (CREATE OR REPLACE)
 --   4. fixtures/synthetic_phase3a_extraction_fixture.sql loaded (committed)
@@ -86,7 +93,10 @@ INSERT INTO fte_denial_knowledge (id, practice_id, carc_code, rarc_code, payer_n
 INSERT INTO fte_claims (id, practice_id, internal_claim_id, claim_number, payer_name, status) VALUES
   ('e5c00000-0000-4000-8000-00000000000a','e5000000-0000-4000-8000-0000000000fe','SYN-EXP-REC','SYN-EXP-REC','Synthetic Payer','open'),
   ('e5c00000-0000-4000-8000-00000000000b','e5000000-0000-4000-8000-0000000000fe','SYN-EXP-MIXED','SYN-EXP-MIXED','Synthetic Payer','open'),
-  ('e5c00000-0000-4000-8000-00000000000c','e5000000-0000-4000-8000-0000000000fe','SYN-EXP-LIFE','SYN-EXP-LIFE','Synthetic Payer','open');
+  ('e5c00000-0000-4000-8000-00000000000c','e5000000-0000-4000-8000-0000000000fe','SYN-EXP-LIFE','SYN-EXP-LIFE','Synthetic Payer','open'),
+  ('e5c00000-0000-4000-8000-00000000000d','e5000000-0000-4000-8000-0000000000fe','SYN-EXP-AOU','SYN-EXP-AOU','Synthetic Payer','open'),
+  ('e5c00000-0000-4000-8000-00000000000e','e5000000-0000-4000-8000-0000000000fe','SYN-EXP-AOD','SYN-EXP-AOD','Synthetic Payer','open'),
+  ('e5c00000-0000-4000-8000-00000000000f','e5000000-0000-4000-8000-0000000000fe','SYN-EXP-AOP','SYN-EXP-AOP','Synthetic Payer','open');
 
 -- Column-explicit INSERT ... SELECT: invariant columns (practice_id,
 -- evidence_id, payer_name, confidence_score, page_number, flags, metadata) are
@@ -117,8 +127,29 @@ FROM (VALUES
   -- resolutions below recover 60 + write off 40 -> net denied 0, gross_denied 100,
   -- recovered 60, written_off 40, remaining_recoverable 40 (recoverable 100 - 60).
   ('e5b00000-0000-4000-8000-000000000006', 'billed_amount', 100.00, 'billed', 'SYN-EXP-LIFE', NULL, NULL, NULL, '100.00', '100.00'),
-  ('e5b00000-0000-4000-8000-000000000007', 'denial', 100.00, 'denied', 'SYN-EXP-LIFE', NULL, 'CO-45', NULL, '100.00', '100.00')
+  ('e5b00000-0000-4000-8000-000000000007', 'denial', 100.00, 'denied', 'SYN-EXP-LIFE', NULL, 'CO-45', NULL, '100.00', '100.00'),
+  -- AOU/AOD/AOP (Task 018D): billed 100 + denial 100 each; appeal filed and an
+  -- outcome recorded (upheld / denied / partial respectively). Reporting-only:
+  -- accounting stays denied 100 / open_balance 0.
+  ('e5b00000-0000-4000-8000-000000000008', 'billed_amount', 100.00, 'billed', 'SYN-EXP-AOU', NULL, NULL, NULL, '100.00', '100.00'),
+  ('e5b00000-0000-4000-8000-000000000009', 'denial', 100.00, 'denied', 'SYN-EXP-AOU', NULL, 'CO-45', NULL, '100.00', '100.00'),
+  ('e5b00000-0000-4000-8000-00000000000a', 'billed_amount', 100.00, 'billed', 'SYN-EXP-AOD', NULL, NULL, NULL, '100.00', '100.00'),
+  ('e5b00000-0000-4000-8000-00000000000b', 'denial', 100.00, 'denied', 'SYN-EXP-AOD', NULL, 'CO-45', NULL, '100.00', '100.00'),
+  ('e5b00000-0000-4000-8000-00000000000c', 'billed_amount', 100.00, 'billed', 'SYN-EXP-AOP', NULL, NULL, NULL, '100.00', '100.00'),
+  ('e5b00000-0000-4000-8000-00000000000d', 'denial', 100.00, 'denied', 'SYN-EXP-AOP', NULL, 'CO-45', NULL, '100.00', '100.00')
 ) AS v(id, observation_type, amount, amount_type, claim_identifier, check_eft_identifier, carc_code, rarc_code, raw_value, normalized_value);
+
+-- Appeal-outcome resolutions (Task 018D): each AO claim files an appeal and
+-- records one outcome. SYN-EXP-LIFE keeps its appeal WITHOUT an outcome (null case).
+INSERT INTO fte_review_resolutions
+  (practice_id, claim_id, action, target_type, appeal_outcome, resolved_by, resolved_at)
+VALUES
+  ('e5000000-0000-4000-8000-0000000000fe','e5c00000-0000-4000-8000-00000000000d','file_appeal','claim',NULL,'test_runner','2026-07-05 08:00:00+00'),
+  ('e5000000-0000-4000-8000-0000000000fe','e5c00000-0000-4000-8000-00000000000d','record_appeal_outcome','claim','upheld','test_runner','2026-07-05 08:01:00+00'),
+  ('e5000000-0000-4000-8000-0000000000fe','e5c00000-0000-4000-8000-00000000000e','file_appeal','claim',NULL,'test_runner','2026-07-05 08:00:00+00'),
+  ('e5000000-0000-4000-8000-0000000000fe','e5c00000-0000-4000-8000-00000000000e','record_appeal_outcome','claim','denied','test_runner','2026-07-05 08:01:00+00'),
+  ('e5000000-0000-4000-8000-0000000000fe','e5c00000-0000-4000-8000-00000000000f','file_appeal','claim',NULL,'test_runner','2026-07-05 08:00:00+00'),
+  ('e5000000-0000-4000-8000-0000000000fe','e5c00000-0000-4000-8000-00000000000f','record_appeal_outcome','claim','partial','test_runner','2026-07-05 08:01:00+00');
 
 -- Lifecycle resolutions for SYN-EXP-LIFE (Task 017D): appeal (reporting-only) +
 -- recovery 60 + write-off 40 consume the 100 denied pool exactly. Explicit
@@ -154,9 +185,9 @@ BEGIN
     AND  n.nspname = 'public';
 
   IF v_count = 0 THEN
-    RAISE EXCEPTION 'FAIL [1/26] fte_explain_claim not found in pg_proc';
+    RAISE EXCEPTION 'FAIL [1/32] fte_explain_claim not found in pg_proc';
   END IF;
-  RAISE NOTICE 'PASS [1/26] fte_explain_claim exists in pg_proc';
+  RAISE NOTICE 'PASS [1/32] fte_explain_claim exists in pg_proc';
 
 
   -- =========================================================================
@@ -171,42 +202,42 @@ BEGIN
   BEGIN
     v_result_0001 := fte_explain_claim(v_practice_id, v_claim_0001);
     IF v_result_0001 IS NULL THEN
-      RAISE EXCEPTION 'FAIL [2/26] fte_explain_claim returned NULL for CLM-P3A-0001';
+      RAISE EXCEPTION 'FAIL [2/32] fte_explain_claim returned NULL for CLM-P3A-0001';
     END IF;
   EXCEPTION WHEN OTHERS THEN
-    RAISE EXCEPTION 'FAIL [2/26] fte_explain_claim raised exception for CLM-P3A-0001: %', SQLERRM;
+    RAISE EXCEPTION 'FAIL [2/32] fte_explain_claim raised exception for CLM-P3A-0001: %', SQLERRM;
   END;
-  RAISE NOTICE 'PASS [2/26] fte_explain_claim returns jsonb for CLM-P3A-0001';
+  RAISE NOTICE 'PASS [2/32] fte_explain_claim returns jsonb for CLM-P3A-0001';
 
 
   -- =========================================================================
   -- CHECK 3: CLM-P3A-0001 claim_number = 'CLM-P3A-0001'
   -- =========================================================================
   IF v_result_0001->>'claim_number' <> 'CLM-P3A-0001' THEN
-    RAISE EXCEPTION 'FAIL [3/26] expected claim_number=CLM-P3A-0001, got %',
+    RAISE EXCEPTION 'FAIL [3/32] expected claim_number=CLM-P3A-0001, got %',
       v_result_0001->>'claim_number';
   END IF;
-  RAISE NOTICE 'PASS [3/26] CLM-P3A-0001 claim_number correct';
+  RAISE NOTICE 'PASS [3/32] CLM-P3A-0001 claim_number correct';
 
 
   -- =========================================================================
   -- CHECK 4: CLM-P3A-0001 reconciliation_status = 'balanced'
   -- =========================================================================
   IF v_result_0001->>'reconciliation_status' <> 'balanced' THEN
-    RAISE EXCEPTION 'FAIL [4/26] expected reconciliation_status=balanced, got %',
+    RAISE EXCEPTION 'FAIL [4/32] expected reconciliation_status=balanced, got %',
       v_result_0001->>'reconciliation_status';
   END IF;
-  RAISE NOTICE 'PASS [4/26] CLM-P3A-0001 reconciliation_status = balanced';
+  RAISE NOTICE 'PASS [4/32] CLM-P3A-0001 reconciliation_status = balanced';
 
 
   -- =========================================================================
   -- CHECK 5: CLM-P3A-0001 open_balance_amount = '0.00'
   -- =========================================================================
   IF v_result_0001->>'open_balance_amount' <> '0.00' THEN
-    RAISE EXCEPTION 'FAIL [5/26] expected open_balance_amount=0.00, got %',
+    RAISE EXCEPTION 'FAIL [5/32] expected open_balance_amount=0.00, got %',
       v_result_0001->>'open_balance_amount';
   END IF;
-  RAISE NOTICE 'PASS [5/26] CLM-P3A-0001 open_balance_amount = 0.00';
+  RAISE NOTICE 'PASS [5/32] CLM-P3A-0001 open_balance_amount = 0.00';
 
 
   -- =========================================================================
@@ -214,9 +245,9 @@ BEGIN
   -- =========================================================================
   v_text := v_result_0001->>'summary';
   IF v_text NOT LIKE '%balanced%' THEN
-    RAISE EXCEPTION 'FAIL [6/26] summary does not contain ''balanced'': %', v_text;
+    RAISE EXCEPTION 'FAIL [6/32] summary does not contain ''balanced'': %', v_text;
   END IF;
-  RAISE NOTICE 'PASS [6/26] CLM-P3A-0001 summary contains ''balanced''';
+  RAISE NOTICE 'PASS [6/32] CLM-P3A-0001 summary contains ''balanced''';
 
 
   -- =========================================================================
@@ -225,9 +256,9 @@ BEGIN
   -- =========================================================================
   v_count := jsonb_array_length(v_result_0001->'events');
   IF v_count <> 3 THEN
-    RAISE EXCEPTION 'FAIL [7/26] expected events length=3, got %', v_count;
+    RAISE EXCEPTION 'FAIL [7/32] expected events length=3, got %', v_count;
   END IF;
-  RAISE NOTICE 'PASS [7/26] CLM-P3A-0001 events array length = 3';
+  RAISE NOTICE 'PASS [7/32] CLM-P3A-0001 events array length = 3';
 
 
   -- =========================================================================
@@ -236,9 +267,9 @@ BEGIN
   -- =========================================================================
   v_count := jsonb_array_length(v_result_0001->'evidence');
   IF v_count <> 2 THEN
-    RAISE EXCEPTION 'FAIL [8/26] expected evidence length=2, got %', v_count;
+    RAISE EXCEPTION 'FAIL [8/32] expected evidence length=2, got %', v_count;
   END IF;
-  RAISE NOTICE 'PASS [8/26] CLM-P3A-0001 evidence array length = 2';
+  RAISE NOTICE 'PASS [8/32] CLM-P3A-0001 evidence array length = 2';
 
 
   -- =========================================================================
@@ -254,20 +285,20 @@ BEGIN
   -- CHECK 9: CLM-P3A-0003 reconciliation_status = 'unbalanced'
   -- =========================================================================
   IF v_result_0003->>'reconciliation_status' <> 'unbalanced' THEN
-    RAISE EXCEPTION 'FAIL [9/26] expected reconciliation_status=unbalanced, got %',
+    RAISE EXCEPTION 'FAIL [9/32] expected reconciliation_status=unbalanced, got %',
       v_result_0003->>'reconciliation_status';
   END IF;
-  RAISE NOTICE 'PASS [9/26] CLM-P3A-0003 reconciliation_status = unbalanced';
+  RAISE NOTICE 'PASS [9/32] CLM-P3A-0003 reconciliation_status = unbalanced';
 
 
   -- =========================================================================
   -- CHECK 10: CLM-P3A-0003 open_balance_amount = '180.00'
   -- =========================================================================
   IF v_result_0003->>'open_balance_amount' <> '180.00' THEN
-    RAISE EXCEPTION 'FAIL [10/26] expected open_balance_amount=180.00, got %',
+    RAISE EXCEPTION 'FAIL [10/32] expected open_balance_amount=180.00, got %',
       v_result_0003->>'open_balance_amount';
   END IF;
-  RAISE NOTICE 'PASS [10/26] CLM-P3A-0003 open_balance_amount = 180.00';
+  RAISE NOTICE 'PASS [10/32] CLM-P3A-0003 open_balance_amount = 180.00';
 
 
   -- =========================================================================
@@ -275,9 +306,9 @@ BEGIN
   -- =========================================================================
   v_text := v_result_0003->>'summary';
   IF v_text NOT LIKE '%180.00%' THEN
-    RAISE EXCEPTION 'FAIL [11/26] summary does not contain ''180.00'': %', v_text;
+    RAISE EXCEPTION 'FAIL [11/32] summary does not contain ''180.00'': %', v_text;
   END IF;
-  RAISE NOTICE 'PASS [11/26] CLM-P3A-0003 summary contains ''180.00''';
+  RAISE NOTICE 'PASS [11/32] CLM-P3A-0003 summary contains ''180.00''';
 
 
   -- =========================================================================
@@ -286,13 +317,13 @@ BEGIN
   -- =========================================================================
   v_count := jsonb_array_length(v_result_0003->'review_queue');
   IF v_count <> 1 THEN
-    RAISE EXCEPTION 'FAIL [12/26] expected review_queue length=1, got %', v_count;
+    RAISE EXCEPTION 'FAIL [12/32] expected review_queue length=1, got %', v_count;
   END IF;
   v_text := v_result_0003->'review_queue'->0->>'reason';
   IF v_text <> 'unbalanced_financial_position' THEN
-    RAISE EXCEPTION 'FAIL [12/26] expected reason=unbalanced_financial_position, got %', v_text;
+    RAISE EXCEPTION 'FAIL [12/32] expected reason=unbalanced_financial_position, got %', v_text;
   END IF;
-  RAISE NOTICE 'PASS [12/26] CLM-P3A-0003 review_queue length=1 and reason correct';
+  RAISE NOTICE 'PASS [12/32] CLM-P3A-0003 review_queue length=1 and reason correct';
 
 
   -- =========================================================================
@@ -305,12 +336,12 @@ BEGIN
   LIMIT 1;
 
   IF v_count IS NULL THEN
-    RAISE EXCEPTION 'FAIL [13/26] payment_applied event not found in CLM-P3A-0001 events';
+    RAISE EXCEPTION 'FAIL [13/32] payment_applied event not found in CLM-P3A-0001 events';
   END IF;
   IF v_count <> 2 THEN
-    RAISE EXCEPTION 'FAIL [13/26] expected payment_applied evidence_count=2, got %', v_count;
+    RAISE EXCEPTION 'FAIL [13/32] expected payment_applied evidence_count=2, got %', v_count;
   END IF;
-  RAISE NOTICE 'PASS [13/26] CLM-P3A-0001 payment_applied evidence_count = 2';
+  RAISE NOTICE 'PASS [13/32] CLM-P3A-0001 payment_applied evidence_count = 2';
 
 
   -- =========================================================================
@@ -328,9 +359,9 @@ BEGIN
     AND length(snippet) > 500;
 
   IF v_count > 0 THEN
-    RAISE EXCEPTION 'FAIL [14/26] % raw_text_snippet value(s) exceed 500 chars', v_count;
+    RAISE EXCEPTION 'FAIL [14/32] % raw_text_snippet value(s) exceed 500 chars', v_count;
   END IF;
-  RAISE NOTICE 'PASS [14/26] all non-null raw_text_snippet values have length <= 500';
+  RAISE NOTICE 'PASS [14/32] all non-null raw_text_snippet values have length <= 500';
 
 END;
 $$;
@@ -358,47 +389,47 @@ BEGIN
   IF NOT (v_p3a->>'denied_amount' IS NULL
           AND v_p3a->>'recoverable_amount' IS NULL
           AND v_p3a->>'nonrecoverable_denied_amount' IS NULL) THEN
-    RAISE EXCEPTION 'FAIL [15/26] no-denial claim expected null denial fields, got denied=% recoverable=% nonrec=%',
+    RAISE EXCEPTION 'FAIL [15/32] no-denial claim expected null denial fields, got denied=% recoverable=% nonrec=%',
       v_p3a->>'denied_amount', v_p3a->>'recoverable_amount', v_p3a->>'nonrecoverable_denied_amount';
   END IF;
-  RAISE NOTICE 'PASS [15/26] no-denial claim: denied/recoverable/nonrecoverable are null';
+  RAISE NOTICE 'PASS [15/32] no-denial claim: denied/recoverable/nonrecoverable are null';
 
   -- CHECK 16: E2/denial ledger keys are present (surfaced) in the explanation.
   IF NOT (v_p3a ? 'allowed_amount' AND v_p3a ? 'patient_responsibility_amount'
           AND v_p3a ? 'denied_amount' AND v_p3a ? 'recoverable_amount'
           AND v_p3a ? 'nonrecoverable_denied_amount') THEN
-    RAISE EXCEPTION 'FAIL [16/26] explanation missing one or more new ledger keys';
+    RAISE EXCEPTION 'FAIL [16/32] explanation missing one or more new ledger keys';
   END IF;
-  RAISE NOTICE 'PASS [16/26] explanation surfaces allowed/patient_responsibility/denied/recoverable keys';
+  RAISE NOTICE 'PASS [16/32] explanation surfaces allowed/patient_responsibility/denied/recoverable keys';
 
   -- CHECK 17: REC claim surfaces denied_amount.
   IF v_rec->>'denied_amount' <> '100.00' THEN
-    RAISE EXCEPTION 'FAIL [17/26] REC denied_amount expected 100.00, got %', v_rec->>'denied_amount';
+    RAISE EXCEPTION 'FAIL [17/32] REC denied_amount expected 100.00, got %', v_rec->>'denied_amount';
   END IF;
-  RAISE NOTICE 'PASS [17/26] REC denied_amount surfaced';
+  RAISE NOTICE 'PASS [17/32] REC denied_amount surfaced';
 
   -- CHECK 18: REC recoverable_amount + derived nonrecoverable_denied_amount.
   IF NOT (v_rec->>'recoverable_amount' = '100.00' AND v_rec->>'nonrecoverable_denied_amount' = '0.00') THEN
-    RAISE EXCEPTION 'FAIL [18/26] REC recoverable=100.00/nonrecoverable=0.00 expected, got rec=% nonrec=%',
+    RAISE EXCEPTION 'FAIL [18/32] REC recoverable=100.00/nonrecoverable=0.00 expected, got rec=% nonrec=%',
       v_rec->>'recoverable_amount', v_rec->>'nonrecoverable_denied_amount';
   END IF;
-  RAISE NOTICE 'PASS [18/26] REC recoverable + derived nonrecoverable correct';
+  RAISE NOTICE 'PASS [18/32] REC recoverable + derived nonrecoverable correct';
 
   -- CHECK 19: MIXED claim aggregates recoverable subset; nonrecoverable is the remainder.
   IF NOT (v_mixed->>'denied_amount' = '100.00'
           AND v_mixed->>'recoverable_amount' = '60.00'
           AND v_mixed->>'nonrecoverable_denied_amount' = '40.00') THEN
-    RAISE EXCEPTION 'FAIL [19/26] MIXED expected denied=100.00 recoverable=60.00 nonrec=40.00, got %/%/%',
+    RAISE EXCEPTION 'FAIL [19/32] MIXED expected denied=100.00 recoverable=60.00 nonrec=40.00, got %/%/%',
       v_mixed->>'denied_amount', v_mixed->>'recoverable_amount', v_mixed->>'nonrecoverable_denied_amount';
   END IF;
-  RAISE NOTICE 'PASS [19/26] MIXED denied/recoverable/nonrecoverable split correct';
+  RAISE NOTICE 'PASS [19/32] MIXED denied/recoverable/nonrecoverable split correct';
 
   -- CHECK 20: recoverable overlay does not change accounting (open_balance / status).
   IF NOT (v_rec->>'open_balance_amount' = '0.00' AND v_rec->>'reconciliation_status' = 'balanced') THEN
-    RAISE EXCEPTION 'FAIL [20/26] REC accounting changed by overlay: open=% status=%',
+    RAISE EXCEPTION 'FAIL [20/32] REC accounting changed by overlay: open=% status=%',
       v_rec->>'open_balance_amount', v_rec->>'reconciliation_status';
   END IF;
-  RAISE NOTICE 'PASS [20/26] recoverable overlay leaves open_balance/status unchanged';
+  RAISE NOTICE 'PASS [20/32] recoverable overlay leaves open_balance/status unchanged';
 
 END;
 $$;
@@ -420,34 +451,34 @@ BEGIN
   v_life := fte_explain_claim(v_exp_practice, 'e5c00000-0000-4000-8000-00000000000c');
 
   IF v_life IS NULL THEN
-    RAISE EXCEPTION 'FAIL [21/26] fte_explain_claim returned NULL for SYN-EXP-LIFE';
+    RAISE EXCEPTION 'FAIL [21/32] fte_explain_claim returned NULL for SYN-EXP-LIFE';
   END IF;
 
   -- CHECK 21: gross_denied_amount derived from denial_posted event history.
   IF v_life->>'gross_denied_amount' <> '100.00' THEN
-    RAISE EXCEPTION 'FAIL [21/26] gross_denied_amount expected 100.00, got %', v_life->>'gross_denied_amount';
+    RAISE EXCEPTION 'FAIL [21/32] gross_denied_amount expected 100.00, got %', v_life->>'gross_denied_amount';
   END IF;
-  RAISE NOTICE 'PASS [21/26] gross_denied_amount surfaced from denial_posted history (100.00)';
+  RAISE NOTICE 'PASS [21/32] gross_denied_amount surfaced from denial_posted history (100.00)';
 
   -- CHECK 22: denied_amount is NET after recovery + write-off (documents net semantics).
   IF v_life->>'denied_amount' <> '0.00' THEN
-    RAISE EXCEPTION 'FAIL [22/26] net denied_amount expected 0.00, got %', v_life->>'denied_amount';
+    RAISE EXCEPTION 'FAIL [22/32] net denied_amount expected 0.00, got %', v_life->>'denied_amount';
   END IF;
-  RAISE NOTICE 'PASS [22/26] denied_amount is net after recovery/write-off (0.00) alongside gross 100.00';
+  RAISE NOTICE 'PASS [22/32] denied_amount is net after recovery/write-off (0.00) alongside gross 100.00';
 
   -- CHECK 23: recovered_amount / written_off_amount surfaced from the position.
   IF NOT (v_life->>'recovered_amount' = '60.00' AND v_life->>'written_off_amount' = '40.00') THEN
-    RAISE EXCEPTION 'FAIL [23/26] expected recovered=60.00 written_off=40.00, got %/%',
+    RAISE EXCEPTION 'FAIL [23/32] expected recovered=60.00 written_off=40.00, got %/%',
       v_life->>'recovered_amount', v_life->>'written_off_amount';
   END IF;
-  RAISE NOTICE 'PASS [23/26] recovered_amount=60.00 and written_off_amount=40.00 surfaced';
+  RAISE NOTICE 'PASS [23/32] recovered_amount=60.00 and written_off_amount=40.00 surfaced';
 
   -- CHECK 24: remaining_recoverable_amount = recoverable(100) - recovered(60), non-negative.
   IF v_life->>'remaining_recoverable_amount' <> '40.00' THEN
-    RAISE EXCEPTION 'FAIL [24/26] remaining_recoverable_amount expected 40.00, got %',
+    RAISE EXCEPTION 'FAIL [24/32] remaining_recoverable_amount expected 40.00, got %',
       v_life->>'remaining_recoverable_amount';
   END IF;
-  RAISE NOTICE 'PASS [24/26] remaining_recoverable_amount=40.00 (recoverable 100 - recovered 60), non-negative';
+  RAISE NOTICE 'PASS [24/32] remaining_recoverable_amount=40.00 (recoverable 100 - recovered 60), non-negative';
 
   -- CHECK 25: appeal marker true; lifecycle_event_counts = appeal/recovery/write_off 1/1/1.
   v_counts := v_life->'lifecycle_event_counts';
@@ -455,15 +486,15 @@ BEGIN
           AND (v_counts->>'appeal_filed')::int = 1
           AND (v_counts->>'recovery_received')::int = 1
           AND (v_counts->>'write_off_approved')::int = 1) THEN
-    RAISE EXCEPTION 'FAIL [25/26] appeal/lifecycle counts wrong: appeal_filed=% counts=%',
+    RAISE EXCEPTION 'FAIL [25/32] appeal/lifecycle counts wrong: appeal_filed=% counts=%',
       v_life->>'appeal_filed', v_counts;
   END IF;
-  RAISE NOTICE 'PASS [25/26] appeal_filed marker true; lifecycle_event_counts appeal/recovery/write_off = 1/1/1';
+  RAISE NOTICE 'PASS [25/32] appeal_filed marker true; lifecycle_event_counts appeal/recovery/write_off = 1/1/1';
 
   -- CHECK 26: lifecycle is reporting-only (open_balance/status unchanged) AND all
   -- pre-017D output keys are preserved (backward compatibility).
   IF NOT (v_life->>'open_balance_amount' = '0.00' AND v_life->>'reconciliation_status' = 'balanced') THEN
-    RAISE EXCEPTION 'FAIL [26/26] lifecycle changed accounting: open=% status=%',
+    RAISE EXCEPTION 'FAIL [26/32] lifecycle changed accounting: open=% status=%',
       v_life->>'open_balance_amount', v_life->>'reconciliation_status';
   END IF;
   IF NOT (v_life ? 'billed_amount' AND v_life ? 'allowed_amount'
@@ -472,9 +503,84 @@ BEGIN
           AND v_life ? 'recoverable_amount' AND v_life ? 'nonrecoverable_denied_amount'
           AND v_life ? 'open_balance_amount' AND v_life ? 'summary'
           AND v_life ? 'events' AND v_life ? 'evidence' AND v_life ? 'review_queue') THEN
-    RAISE EXCEPTION 'FAIL [26/26] a pre-017D output key is missing (backward compatibility broken)';
+    RAISE EXCEPTION 'FAIL [26/32] a pre-017D output key is missing (backward compatibility broken)';
   END IF;
-  RAISE NOTICE 'PASS [26/26] lifecycle reporting-only: open_balance/status unchanged; all prior keys preserved';
+  RAISE NOTICE 'PASS [26/32] lifecycle reporting-only: open_balance/status unchanged; all prior keys preserved';
+
+END;
+$$;
+
+
+-- ===========================================================================
+-- Task 018D: appeal-outcome explain surfacing.
+-- AOU/AOD/AOP: appeal filed + outcome recorded (upheld/denied/partial).
+-- LIFE: appeal filed, NO outcome -> appeal_outcome null.
+-- Reporting-only: accounting fields unchanged by outcomes.
+-- ===========================================================================
+DO $$
+DECLARE
+  v_exp_practice uuid := 'e5000000-0000-4000-8000-0000000000fe';
+  v_aou  jsonb;
+  v_aod  jsonb;
+  v_aop  jsonb;
+  v_life jsonb;
+BEGIN
+  -- Positions already materialized by the earlier PERFORM fte_reconcile_practice
+  -- call for this practice; a fresh call keeps this block self-sufficient.
+  PERFORM fte_reconcile_practice(v_exp_practice);
+
+  v_aou  := fte_explain_claim(v_exp_practice, 'e5c00000-0000-4000-8000-00000000000d');
+  v_aod  := fte_explain_claim(v_exp_practice, 'e5c00000-0000-4000-8000-00000000000e');
+  v_aop  := fte_explain_claim(v_exp_practice, 'e5c00000-0000-4000-8000-00000000000f');
+  v_life := fte_explain_claim(v_exp_practice, 'e5c00000-0000-4000-8000-00000000000c');
+
+  -- CHECK 27: upheld outcome surfaced.
+  IF v_aou->>'appeal_outcome' <> 'upheld' THEN
+    RAISE EXCEPTION 'FAIL [27/32] AOU appeal_outcome expected upheld, got %', v_aou->>'appeal_outcome';
+  END IF;
+  RAISE NOTICE 'PASS [27/32] upheld appeal outcome surfaced';
+
+  -- CHECK 28: denied outcome surfaced.
+  IF v_aod->>'appeal_outcome' <> 'denied' THEN
+    RAISE EXCEPTION 'FAIL [28/32] AOD appeal_outcome expected denied, got %', v_aod->>'appeal_outcome';
+  END IF;
+  RAISE NOTICE 'PASS [28/32] denied appeal outcome surfaced';
+
+  -- CHECK 29: partial outcome surfaced.
+  IF v_aop->>'appeal_outcome' <> 'partial' THEN
+    RAISE EXCEPTION 'FAIL [29/32] AOP appeal_outcome expected partial, got %', v_aop->>'appeal_outcome';
+  END IF;
+  RAISE NOTICE 'PASS [29/32] partial appeal outcome surfaced';
+
+  -- CHECK 30: no recorded outcome -> appeal_outcome is JSON null (key present).
+  IF NOT (v_life ? 'appeal_outcome') OR v_life->>'appeal_outcome' IS NOT NULL THEN
+    RAISE EXCEPTION 'FAIL [30/32] LIFE appeal_outcome expected null (key present), got %', v_life->>'appeal_outcome';
+  END IF;
+  RAISE NOTICE 'PASS [30/32] claim without a recorded outcome returns appeal_outcome null';
+
+  -- CHECK 31: prior lifecycle explain fields still present (017D keys).
+  IF NOT (v_aou ? 'gross_denied_amount' AND v_aou ? 'recovered_amount'
+          AND v_aou ? 'written_off_amount' AND v_aou ? 'remaining_recoverable_amount'
+          AND v_aou ? 'appeal_filed' AND v_aou ? 'lifecycle_event_counts') THEN
+    RAISE EXCEPTION 'FAIL [31/32] a prior lifecycle explain key is missing on AOU';
+  END IF;
+  IF NOT ((v_aou->>'appeal_filed')::boolean) THEN
+    RAISE EXCEPTION 'FAIL [31/32] AOU appeal_filed marker expected true';
+  END IF;
+  RAISE NOTICE 'PASS [31/32] prior lifecycle explain fields still present (appeal_filed true on AOU)';
+
+  -- CHECK 32: reporting-only — accounting fields unchanged by the outcome
+  -- (denied 100, open_balance 0, no recovery/write-off, status balanced).
+  IF NOT (v_aou->>'denied_amount' = '100.00'
+          AND v_aou->>'open_balance_amount' = '0.00'
+          AND v_aou->>'recovered_amount' IS NULL
+          AND v_aou->>'written_off_amount' IS NULL
+          AND v_aou->>'reconciliation_status' = 'balanced') THEN
+    RAISE EXCEPTION 'FAIL [32/32] AOU accounting changed by outcome: denied=% open=% rec=% wo=% status=%',
+      v_aou->>'denied_amount', v_aou->>'open_balance_amount',
+      v_aou->>'recovered_amount', v_aou->>'written_off_amount', v_aou->>'reconciliation_status';
+  END IF;
+  RAISE NOTICE 'PASS [32/32] appeal outcome is reporting-only: accounting fields unchanged';
 
 END;
 $$;

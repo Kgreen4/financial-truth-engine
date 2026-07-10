@@ -39,6 +39,7 @@ DECLARE
   v_evidence    jsonb;
   v_review      jsonb;
   v_summary     text;
+  v_appeal_outcome text;
 BEGIN
 
   -- =========================================================================
@@ -91,6 +92,23 @@ BEGIN
   FROM   fte_claim_events ce
   WHERE  ce.practice_id = p_practice_id
     AND  ce.claim_id    = p_claim_id;
+
+  -- =========================================================================
+  -- Step 2c (Task 018D): active appeal outcome, read from reviewer resolutions.
+  -- Reporting-only. Surfaces the single active record_appeal_outcome disposition
+  -- (upheld / denied / partial). NULL when none is recorded; also NULL when
+  -- conflicting active outcomes exist (Task 018C routes that to review — explain
+  -- does not invent a value). Reads fte_review_resolutions directly; it makes no
+  -- accounting change and does not alter position or status.
+  -- =========================================================================
+  SELECT CASE WHEN COUNT(DISTINCT rr.appeal_outcome) = 1
+              THEN MIN(rr.appeal_outcome) ELSE NULL END
+  INTO   v_appeal_outcome
+  FROM   fte_review_resolutions rr
+  WHERE  rr.practice_id   = p_practice_id
+    AND  rr.claim_id      = p_claim_id
+    AND  rr.action        = 'record_appeal_outcome'
+    AND  rr.is_superseded = false;
 
   -- =========================================================================
   -- Step 3: Build events array.
@@ -249,6 +267,11 @@ BEGIN
     -- appeal_filed: reporting marker only (an appeal_filed event exists); it
     -- implies NO accounting change.
     'appeal_filed',                   COALESCE(v_life.appeal_ct, 0) > 0,
+    -- appeal_outcome (Task 018D): the single active record_appeal_outcome
+    -- disposition (upheld/denied/partial); JSON null when none is recorded or
+    -- when conflicting active outcomes exist (018C routes conflicts to review).
+    -- Reporting-only — implies NO accounting change.
+    'appeal_outcome',                 v_appeal_outcome,
     'lifecycle_event_counts',         jsonb_build_object(
                                         'appeal_filed',       COALESCE(v_life.appeal_ct, 0),
                                         'recovery_received',  COALESCE(v_life.recovery_ct, 0),
