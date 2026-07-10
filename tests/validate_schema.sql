@@ -2,7 +2,7 @@
 -- Financial Truth Engine — Schema Validation
 -- tests/validate_schema.sql
 --
--- Asserts the structural guarantees of migrations 001, 002, and 012. Self-contained:
+-- Asserts the structural guarantees of migrations 001, 002, 012, and 013. Self-contained:
 --   * Catalog checks (RLS, FK isolation) read system catalogs — no data needed.
 --   * Behavioral checks INSERT synthetic rows under a throwaway test practice,
 --     assert invariants, then ROLLBACK so nothing persists.
@@ -38,7 +38,7 @@ begin
   if missing is not null then
     raise exception 'FAIL [RLS]: RLS not enabled on: %', missing;
   end if;
-  raise notice 'PASS [1/20] RLS enabled on all fte_ tables (incl. fte_review_resolutions)';
+  raise notice 'PASS [1/23] RLS enabled on all fte_ tables (incl. fte_review_resolutions)';
 end $$;
 
 -- -----------------------------------------------------------------------------
@@ -61,7 +61,7 @@ begin
   if bad is not null then
     raise exception 'FAIL [ISOLATION]: fte_ tables reference non-fte_ tables: %', bad;
   end if;
-  raise notice 'PASS [2/20] no fte_ FK references any non-fte_ (eob_/other) table';
+  raise notice 'PASS [2/23] no fte_ FK references any non-fte_ (eob_/other) table';
 end $$;
 
 -- -----------------------------------------------------------------------------
@@ -80,7 +80,7 @@ begin
   if not has_constraint then
     raise exception 'FAIL [AUDIT]: fte_event_evidence audit constraint missing';
   end if;
-  raise notice 'PASS [3/20] event_evidence audit link constraint present';
+  raise notice 'PASS [3/23] event_evidence audit link constraint present';
 end $$;
 
 -- -----------------------------------------------------------------------------
@@ -116,7 +116,7 @@ begin
   if not coalesce(practice_notnull, false) then
     raise exception 'FAIL [POSITION]: fte_financial_positions.practice_id must be NOT NULL';
   end if;
-  raise notice 'PASS [4/20] financial_positions are claim-scoped (unique) and practice-scoped';
+  raise notice 'PASS [4/23] financial_positions are claim-scoped (unique) and practice-scoped';
 end $$;
 
 -- -----------------------------------------------------------------------------
@@ -183,7 +183,7 @@ begin
       values (v_practice, r, jsonb_build_object('check', r));
   end loop;
 
-  raise notice 'PASS [5/20] observation insert created 0 positions; audit link enforced; review_queue captures all 7 reasons';
+  raise notice 'PASS [5/23] observation insert created 0 positions; audit link enforced; review_queue captures all 7 reasons';
 end $$;
 
 -- -----------------------------------------------------------------------------
@@ -208,7 +208,7 @@ begin
   ) then
     raise exception 'FAIL [POSITION]: derived position not stored as claim+practice scoped';
   end if;
-  raise notice 'PASS [6/20] derived financial position is claim+practice scoped';
+  raise notice 'PASS [6/23] derived financial position is claim+practice scoped';
 end $$;
 
 -- =============================================================================
@@ -291,7 +291,7 @@ begin
   end if;
 
   raise notice
-    'PASS [7/20] fte_review_resolutions: 22 required columns present; '
+    'PASS [7/23] fte_review_resolutions: 22 required columns present; '
     'target_type NOT NULL and CHECK present; '
     'target-present CHECK (fte_review_resolutions_target_present) present';
 end $$;
@@ -329,7 +329,7 @@ begin
   if missing_fks is not null then
     raise exception 'FAIL [RESOLUTIONS STABLE FK]: missing FK constraints: %', missing_fks;
   end if;
-  raise notice 'PASS [8/20] stable FK constraints present on practice_id, claim_id, observation_id, evidence_id';
+  raise notice 'PASS [8/23] stable FK constraints present on practice_id, claim_id, observation_id, evidence_id';
 end $$;
 
 -- -----------------------------------------------------------------------------
@@ -360,7 +360,7 @@ begin
       'Phase-0 tables (would block DELETE or cascade reviewer history): %', bad_targets;
   end if;
   raise notice
-    'PASS [9/20] no FK from fte_review_resolutions to fte_review_queue, '
+    'PASS [9/23] no FK from fte_review_resolutions to fte_review_queue, '
     'fte_claim_events, or fte_financial_positions';
 end $$;
 
@@ -429,7 +429,7 @@ begin
   end;
 
   raise notice
-    'PASS [10/20] valid synthetic inserts succeeded (all 3 action categories, with '
+    'PASS [10/23] valid synthetic inserts succeeded (all 3 action categories, with '
     'volatile snapshot targets); is_superseded defaults false; '
     'target-absent row rejected (check_violation); invalid action rejected (check_violation)';
 end $$;
@@ -466,7 +466,7 @@ begin
   end;
 
   raise notice
-    'PASS [11/20] invalid target_type rejected (check_violation); '
+    'PASS [11/23] invalid target_type rejected (check_violation); '
     'invalid non-object metadata (array) rejected (check_violation)';
 end $$;
 
@@ -493,7 +493,7 @@ begin
       'CHECK constraint not found on fte_review_resolutions';
   end if;
   raise notice
-    'PASS [12/20] metadata CHECK (jsonb_typeof(metadata) = ''object'') constraint '
+    'PASS [12/23] metadata CHECK (jsonb_typeof(metadata) = ''object'') constraint '
     'present in catalog';
 end $$;
 
@@ -522,7 +522,7 @@ begin
       'FAIL [RESOLUTIONS INDEXES]: missing expected indexes: %', missing_indexes;
   end if;
   raise notice
-    'PASS [13/20] all 4 indexes present on fte_review_resolutions '
+    'PASS [13/23] all 4 indexes present on fte_review_resolutions '
     '(practice_active, claim_action, observation_action, resolved_at)';
 end $$;
 
@@ -546,7 +546,7 @@ begin
       'FAIL [RESOLUTIONS RLS]: RLS not enabled on fte_review_resolutions';
   end if;
   raise notice
-    'PASS [14/20] RLS explicitly confirmed on fte_review_resolutions '
+    'PASS [14/23] RLS explicitly confirmed on fte_review_resolutions '
     '(policy: fte_review_resolutions_rw)';
 end $$;
 
@@ -571,7 +571,7 @@ begin
       'FAIL [RESOLUTIONS TRIGGER]: trg_fte_review_resolutions_updated_at '
       'not found on fte_review_resolutions';
   end if;
-  raise notice 'PASS [15/20] updated_at trigger present on fte_review_resolutions';
+  raise notice 'PASS [15/23] updated_at trigger present on fte_review_resolutions';
 end $$;
 
 -- =============================================================================
@@ -603,7 +603,7 @@ begin
     raise exception 'FAIL [LIFECYCLE COLS]: missing migration-012 columns: %', missing_cols;
   end if;
   raise notice
-    'PASS [16/20] denial-lifecycle columns present '
+    'PASS [16/23] denial-lifecycle columns present '
     '(review_resolutions.lifecycle_amount; positions.recovered_amount/written_off_amount)';
 end $$;
 
@@ -629,7 +629,7 @@ begin
     values (v_practice, v_claim, 'approve_write_off', 'claim', 50.00, 'test_runner');
 
   raise notice
-    'PASS [17/20] lifecycle actions accepted (file_appeal no-amount; '
+    'PASS [17/23] lifecycle actions accepted (file_appeal no-amount; '
     'record_recovery/approve_write_off positive amount)';
 end $$;
 
@@ -676,7 +676,7 @@ begin
   exception when check_violation then null; end;
 
   raise notice
-    'PASS [18/20] invalid lifecycle shapes rejected '
+    'PASS [18/23] invalid lifecycle shapes rejected '
     '(recovery/write_off NULL|<=0; file_appeal with amount)';
 end $$;
 
@@ -704,7 +704,7 @@ begin
     values (v_practice, 'mark_duplicate', 'observation', v_obs, v_obs2);
 
   raise notice
-    'PASS [19/20] pre-existing actions still valid after vocabulary rebuild (mark_duplicate accepted)';
+    'PASS [19/23] pre-existing actions still valid after vocabulary rebuild (mark_duplicate accepted)';
 end $$;
 
 -- -----------------------------------------------------------------------------
@@ -732,7 +732,87 @@ begin
   exception when check_violation then null; end;
 
   raise notice
-    'PASS [20/20] new position columns reject negative values (recovered_amount, written_off_amount)';
+    'PASS [20/23] new position columns reject negative values (recovered_amount, written_off_amount)';
+end $$;
+
+-- =============================================================================
+-- Migration 013 checks — appeal outcome schema support (Task 018B)
+-- =============================================================================
+
+-- -----------------------------------------------------------------------------
+-- Check 21 (catalog): fte_review_resolutions.appeal_outcome column exists.
+-- -----------------------------------------------------------------------------
+do $$
+declare
+  has_col boolean;
+begin
+  select exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'fte_review_resolutions'
+      and column_name = 'appeal_outcome'
+  ) into has_col;
+  if not has_col then
+    raise exception 'FAIL [21/23] fte_review_resolutions.appeal_outcome column missing (migration 013)';
+  end if;
+  raise notice 'PASS [21/23] appeal_outcome column present on fte_review_resolutions';
+end $$;
+
+-- -----------------------------------------------------------------------------
+-- Check 22 (behavioral): record_appeal_outcome is accepted with a valid shape —
+--           claim anchor + appeal_outcome in ('upheld','denied','partial'), and
+--           without requiring lifecycle_amount.
+-- -----------------------------------------------------------------------------
+do $$
+declare
+  v_practice uuid := 'ffffffff-0000-4000-8000-0000000000aa';
+  v_claim    uuid;
+  v_outcome  text;
+begin
+  select id into v_claim from fte_claims where practice_id = v_practice limit 1;
+
+  foreach v_outcome in array array['upheld','denied','partial'] loop
+    insert into fte_review_resolutions (practice_id, claim_id, action, target_type, appeal_outcome, resolved_by)
+      values (v_practice, v_claim, 'record_appeal_outcome', 'claim', v_outcome, 'test_runner');
+  end loop;
+
+  raise notice
+    'PASS [22/23] record_appeal_outcome accepted for upheld/denied/partial (no lifecycle_amount required)';
+end $$;
+
+-- -----------------------------------------------------------------------------
+-- Check 23 (behavioral): invalid appeal-outcome shapes are rejected —
+--           record_appeal_outcome without an outcome, with an invalid outcome
+--           value, and a non-outcome action carrying an appeal_outcome.
+-- -----------------------------------------------------------------------------
+do $$
+declare
+  v_practice uuid := 'ffffffff-0000-4000-8000-0000000000aa';
+  v_claim    uuid;
+  v_obs      uuid;
+begin
+  select id into v_claim from fte_claims       where practice_id = v_practice limit 1;
+  select id into v_obs   from fte_observations where practice_id = v_practice limit 1;
+
+  begin
+    insert into fte_review_resolutions (practice_id, claim_id, action, target_type, appeal_outcome)
+      values (v_practice, v_claim, 'record_appeal_outcome', 'claim', null);
+    raise exception 'FAIL [23/23] record_appeal_outcome accepted NULL appeal_outcome';
+  exception when check_violation then null; end;
+
+  begin
+    insert into fte_review_resolutions (practice_id, claim_id, action, target_type, appeal_outcome)
+      values (v_practice, v_claim, 'record_appeal_outcome', 'claim', 'not_a_valid_outcome');
+    raise exception 'FAIL [23/23] record_appeal_outcome accepted an invalid appeal_outcome value';
+  exception when check_violation then null; end;
+
+  begin
+    insert into fte_review_resolutions (practice_id, action, target_type, observation_id, appeal_outcome)
+      values (v_practice, 'confirm_observation', 'observation', v_obs, 'upheld');
+    raise exception 'FAIL [23/23] non-outcome action accepted a non-NULL appeal_outcome';
+  exception when check_violation then null; end;
+
+  raise notice
+    'PASS [23/23] invalid appeal-outcome shapes rejected (NULL / invalid value; appeal_outcome on non-outcome action)';
 end $$;
 
 -- Discard all validation inserts. Catalog checks above persist nothing.
