@@ -40,6 +40,9 @@ DECLARE
   v_review      jsonb;
   v_summary     text;
   v_appeal_outcome text;
+  v_appeal_window_days     integer;
+  v_appeal_deadline        date;
+  v_appeal_deadline_status text;
 BEGIN
 
   -- =========================================================================
@@ -109,6 +112,81 @@ BEGIN
     AND  rr.claim_id      = p_claim_id
     AND  rr.action        = 'record_appeal_outcome'
     AND  rr.is_superseded = false;
+
+  -- =========================================================================
+  -- Step 2d (Task 019B): appeal window / deadline, derived from denial_posted
+  -- event history and fte_denial_knowledge.appeal_window_days. Reporting-only;
+  -- INDEPENDENT of the Phase 6b recoverable overlay (own specificity-scored
+  -- match against fte_denial_knowledge, not coupled to recoverable_amount).
+  --
+  -- For each denial_posted event with a non-null event_date, find the
+  -- highest-specificity fte_denial_knowledge row(s) (practice(+8) + payer(+4)
+  -- + carc(+2) + rarc(+1); NULL fields on the knowledge row are wildcards) that
+  -- also have appeal_window_days IS NOT NULL. A knowledge row that matches on
+  -- scope but carries a NULL appeal_window_days is excluded from this join
+  -- entirely -- it never counts as this event's match, so such an event falls
+  -- through to unknown exactly like an event with zero matching rows. Requires
+  -- unanimous agreement (single distinct appeal_window_days) among the
+  -- top-scored rows for that event; a same-specificity conflict fails closed
+  -- (event excluded, no guessing). event_date + resolved window = candidate
+  -- deadline. Across all of the claim's denial_posted events, the EARLIEST
+  -- non-null candidate deadline is surfaced at the claim level (v1: multi-denial
+  -- claims resolve to their tightest/soonest window).
+  --
+  -- Result is NULL (both fields) when: no denial_posted events, no event has a
+  -- non-null event_date, or no event resolves to a non-null candidate deadline.
+  -- =========================================================================
+  WITH claim_denials AS (
+    SELECT ce.id AS event_id, ce.event_date, ce.carc_code, ce.rarc_code, ce.payer_name
+    FROM   fte_claim_events ce
+    WHERE  ce.practice_id = p_practice_id
+      AND  ce.claim_id    = p_claim_id
+      AND  ce.event_type  = 'denial_posted'
+      AND  ce.event_date IS NOT NULL
+  ),
+  scored AS (
+    SELECT cd.event_id, cd.event_date, dk.appeal_window_days,
+           (CASE WHEN dk.practice_id IS NOT NULL THEN 8 ELSE 0 END
+          + CASE WHEN dk.payer_name  IS NOT NULL THEN 4 ELSE 0 END
+          + CASE WHEN dk.carc_code   IS NOT NULL THEN 2 ELSE 0 END
+          + CASE WHEN dk.rarc_code   IS NOT NULL THEN 1 ELSE 0 END) AS score
+    FROM   claim_denials cd
+    JOIN   fte_denial_knowledge dk
+      ON  (dk.practice_id = p_practice_id OR dk.practice_id IS NULL)
+      AND (dk.payer_name  = cd.payer_name OR dk.payer_name  IS NULL)
+      AND (dk.carc_code   = cd.carc_code  OR dk.carc_code   IS NULL)
+      AND (dk.rarc_code   = cd.rarc_code  OR dk.rarc_code   IS NULL)
+      AND dk.appeal_window_days IS NOT NULL
+  ),
+  top_scored AS (
+    SELECT event_id, event_date, appeal_window_days,
+           RANK() OVER (PARTITION BY event_id ORDER BY score DESC) AS rnk
+    FROM   scored
+  ),
+  resolved AS (
+    SELECT event_id, event_date,
+           CASE WHEN COUNT(DISTINCT appeal_window_days) = 1
+                THEN MIN(appeal_window_days) ELSE NULL END AS resolved_window
+    FROM   top_scored
+    WHERE  rnk = 1
+    GROUP BY event_id, event_date
+  ),
+  deadlines AS (
+    SELECT resolved_window, (event_date + resolved_window)::date AS deadline
+    FROM   resolved
+    WHERE  resolved_window IS NOT NULL
+  )
+  SELECT resolved_window, deadline
+  INTO   v_appeal_window_days, v_appeal_deadline
+  FROM   deadlines
+  ORDER BY deadline ASC
+  LIMIT  1;
+
+  v_appeal_deadline_status := CASE
+    WHEN v_appeal_deadline IS NULL      THEN 'unknown'
+    WHEN v_appeal_deadline >= CURRENT_DATE THEN 'open'
+    ELSE 'expired'
+  END;
 
   -- =========================================================================
   -- Step 3: Build events array.
@@ -272,6 +350,13 @@ BEGIN
     -- when conflicting active outcomes exist (018C routes conflicts to review).
     -- Reporting-only — implies NO accounting change.
     'appeal_outcome',                 v_appeal_outcome,
+    -- appeal window / deadline (Task 019B): derived from denial_posted event
+    -- history + fte_denial_knowledge.appeal_window_days. Reporting-only,
+    -- independent of the recoverable overlay. NULL / 'unknown' when no
+    -- denial_posted event, no event_date, or no matching non-null window.
+    'appeal_window_days',             v_appeal_window_days,
+    'appeal_deadline',                to_char(v_appeal_deadline, 'YYYY-MM-DD'),
+    'appeal_deadline_status',         v_appeal_deadline_status,
     'lifecycle_event_counts',         jsonb_build_object(
                                         'appeal_filed',       COALESCE(v_life.appeal_ct, 0),
                                         'recovery_received',  COALESCE(v_life.recovery_ct, 0),
