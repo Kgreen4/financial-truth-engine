@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  guardrails:
+    name: Guardrails / static checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: check_forbidden_refs.sh
+        run: bash scripts/guards/check_forbidden_refs.sh
+
+      - name: check_no_secrets_or_phi.sh
+        run: bash scripts/guards/check_no_secrets_or_phi.sh
+
+      - name: Extractor unit tests (stdlib only, no network, no live API key)
+        run: python3 -m unittest discover -s extractor/tests -t extractor
+
+  database:
+    name: Migrations + validation suites
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: fte_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U postgres"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=10
+    env:
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/fte_ci
+      MIN_PASS_COUNT: 329
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install postgresql-client
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
+
+      - name: Apply migrations + register reconciler
+        run: bash scripts/ci/apply_migrations.sh
+
+      - name: Run validation suites (asserts zero errors, PASS count >= 329)
+        run: bash scripts/ci/run_validations.sh
