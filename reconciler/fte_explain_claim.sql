@@ -44,6 +44,7 @@ DECLARE
   v_appeal_deadline        date;
   v_appeal_deadline_status text;
   v_recoverability_trace   jsonb;
+  v_appeal_window_trace    jsonb;
 BEGIN
 
   -- =========================================================================
@@ -188,6 +189,146 @@ BEGIN
     WHEN v_appeal_deadline >= CURRENT_DATE THEN 'open'
     ELSE 'expired'
   END;
+
+  -- =========================================================================
+  -- Step 2f (Task 022C): appeal-window trace. Reporting/governance only — shows
+  -- WHICH fte_denial_knowledge rule drove the surfaced appeal_window_days /
+  -- appeal_deadline / appeal_deadline_status, and the denial event that produced
+  -- the surfaced (earliest) deadline.
+  --
+  -- The surfaced_* fields REUSE the Step 2d scalars (v_appeal_window_days /
+  -- v_appeal_deadline / v_appeal_deadline_status) verbatim — this trace does NOT
+  -- recompute or change the deadline calculation, it only explains it. The
+  -- driving_event descriptor is re-derived with Step 2d's identical match
+  -- (appeal_window_days IS NOT NULL filter; practice+8 / payer+4 / carc+2 /
+  -- rarc+1; unanimous top-score window or fail-closed) and is the resolved event
+  -- whose (window, deadline) equals the surfaced pair.
+  --
+  -- INDEPENDENT of the Step 2e recoverability trace — because this match filters
+  -- to appeal_window_days IS NOT NULL and recoverability does not, the two may
+  -- legitimately name DIFFERENT knowledge rows for the same denial. That is
+  -- expected, not a conflict.
+  --
+  -- Winner identity (matched_scope / denial_knowledge_id / rule_governance) is
+  -- surfaced ONLY for a single unique top-score row. denial_knowledge_id is a
+  -- SECONDARY, OPAQUE reference; matched_scope + match_score + rule_governance are
+  -- the primary, stable explanation. NO accounting/status/review/event change.
+  -- =========================================================================
+  IF v_pos IS NULL OR v_appeal_deadline IS NULL THEN
+    v_appeal_window_trace := jsonb_build_object(
+      'status',                   'unknown',
+      'surfaced_window_days',     NULL,
+      'surfaced_deadline',        NULL,
+      'surfaced_deadline_status', v_appeal_deadline_status,
+      'surfaced_because',         NULL,
+      'driving_event',            NULL
+    );
+  ELSE
+    WITH claim_denials AS (
+      SELECT ce.id AS event_id, ce.amount, ce.event_date, ce.carc_code,
+             ce.rarc_code, ce.payer_name
+      FROM   fte_claim_events ce
+      WHERE  ce.practice_id = p_practice_id
+        AND  ce.claim_id    = p_claim_id
+        AND  ce.event_type  = 'denial_posted'
+        AND  ce.event_date IS NOT NULL
+    ),
+    scored AS (
+      SELECT cd.event_id, cd.amount, cd.event_date, cd.carc_code, cd.rarc_code,
+             dk.id AS dk_id, dk.appeal_window_days, dk.practice_id AS dk_practice,
+             dk.payer_name AS dk_payer, dk.carc_code AS dk_carc, dk.rarc_code AS dk_rarc,
+             dk.category, dk.subcategory, dk.default_action, dk.default_owner,
+             dk.evidence_requirements,
+             (CASE WHEN dk.practice_id IS NOT NULL THEN 8 ELSE 0 END
+            + CASE WHEN dk.payer_name  IS NOT NULL THEN 4 ELSE 0 END
+            + CASE WHEN dk.carc_code   IS NOT NULL THEN 2 ELSE 0 END
+            + CASE WHEN dk.rarc_code   IS NOT NULL THEN 1 ELSE 0 END) AS score
+      FROM   claim_denials cd
+      LEFT JOIN fte_denial_knowledge dk
+        ON  (dk.practice_id = p_practice_id OR dk.practice_id IS NULL)
+        AND (dk.payer_name  = cd.payer_name OR dk.payer_name  IS NULL)
+        AND (dk.carc_code   = cd.carc_code  OR dk.carc_code   IS NULL)
+        AND (dk.rarc_code   = cd.rarc_code  OR dk.rarc_code   IS NULL)
+        AND dk.appeal_window_days IS NOT NULL
+    ),
+    maxs AS (
+      SELECT event_id, MAX(score) AS max_score
+      FROM   scored WHERE dk_id IS NOT NULL
+      GROUP BY event_id
+    ),
+    top AS (
+      SELECT s.*
+      FROM   scored s
+      JOIN   maxs m ON m.event_id = s.event_id AND s.score = m.max_score
+      WHERE  s.dk_id IS NOT NULL
+    ),
+    per_event AS (
+      SELECT cd.event_id, cd.amount, cd.event_date, cd.carc_code, cd.rarc_code,
+             COUNT(t.dk_id)                        AS top_count,
+             COUNT(DISTINCT t.appeal_window_days)  AS distinct_win,
+             MAX(t.score)                          AS max_score,
+             CASE WHEN COUNT(DISTINCT t.appeal_window_days) = 1
+                  THEN MIN(t.appeal_window_days) ELSE NULL END AS resolved_window,
+             MIN(t.dk_id::text)                    AS w_dk_id,
+             bool_or(t.dk_practice IS NOT NULL)    AS w_practice,
+             MIN(t.dk_payer)                       AS w_payer,
+             MIN(t.dk_carc)                        AS w_carc,
+             MIN(t.dk_rarc)                        AS w_rarc,
+             MIN(t.category)                       AS w_category,
+             MIN(t.subcategory)                    AS w_subcategory,
+             MIN(t.default_action)                 AS w_default_action,
+             MIN(t.default_owner)                  AS w_default_owner,
+             MIN(t.evidence_requirements)          AS w_evidence_requirements
+      FROM   claim_denials cd
+      LEFT JOIN top t ON t.event_id = cd.event_id
+      GROUP BY cd.event_id, cd.amount, cd.event_date, cd.carc_code, cd.rarc_code
+    ),
+    driving AS (
+      -- the resolved event whose (window, deadline) matches the surfaced pair.
+      SELECT *
+      FROM   per_event
+      WHERE  resolved_window = v_appeal_window_days
+        AND  (event_date + resolved_window)::date = v_appeal_deadline
+      ORDER BY event_id
+      LIMIT  1
+    )
+    SELECT jsonb_build_object(
+      'status',                   'matched',
+      'surfaced_window_days',     v_appeal_window_days,
+      'surfaced_deadline',        to_char(v_appeal_deadline, 'YYYY-MM-DD'),
+      'surfaced_deadline_status', v_appeal_deadline_status,
+      'surfaced_because',         'earliest_deadline_across_denials',
+      'driving_event',            jsonb_build_object(
+        'denied_amount',       to_char(d.amount, 'FM999999999999990.00'),
+        'event_date',          to_char(d.event_date, 'YYYY-MM-DD'),
+        'carc_code',           d.carc_code,
+        'rarc_code',           d.rarc_code,
+        'match_status',        CASE WHEN d.top_count = 0    THEN 'no_match'
+                                    WHEN d.distinct_win > 1 THEN 'conflict'
+                                    ELSE 'matched' END,
+        'match_score',         d.max_score,
+        'matched_scope',       CASE WHEN d.top_count = 1
+                                    THEN jsonb_build_object(
+                                           'practice', d.w_practice,
+                                           'payer',    d.w_payer,
+                                           'carc',     d.w_carc,
+                                           'rarc',     d.w_rarc)
+                                    ELSE NULL END,
+        'appeal_window_days',  d.resolved_window,
+        'denial_knowledge_id', CASE WHEN d.top_count = 1 THEN d.w_dk_id ELSE NULL END,
+        'rule_governance',     CASE WHEN d.top_count = 1
+                                    THEN jsonb_build_object(
+                                           'category',              d.w_category,
+                                           'subcategory',           d.w_subcategory,
+                                           'default_action',        d.w_default_action,
+                                           'default_owner',         d.w_default_owner,
+                                           'evidence_requirements', d.w_evidence_requirements)
+                                    ELSE NULL END
+      )
+    )
+    INTO v_appeal_window_trace
+    FROM driving d;
+  END IF;
 
   -- =========================================================================
   -- Step 2e (Task 022B): recoverability trace. Reporting/governance only —
@@ -507,6 +648,14 @@ BEGIN
     'appeal_window_days',             v_appeal_window_days,
     'appeal_deadline',                to_char(v_appeal_deadline, 'YYYY-MM-DD'),
     'appeal_deadline_status',         v_appeal_deadline_status,
+    -- appeal_window_trace (Task 022C): reporting/governance-only nested object
+    -- showing which fte_denial_knowledge rule drove the surfaced appeal window /
+    -- deadline (surfaced_* reuse the scalars above; driving_event names the denial
+    -- that produced the earliest deadline). matched_scope / match_score /
+    -- rule_governance are the primary explanation; denial_knowledge_id is a
+    -- secondary opaque reference. Independent of recoverability_trace. Implies NO
+    -- accounting/status/review-routing change. See Step 2f.
+    'appeal_window_trace',            v_appeal_window_trace,
     'lifecycle_event_counts',         jsonb_build_object(
                                         'appeal_filed',       COALESCE(v_life.appeal_ct, 0),
                                         'recovery_received',  COALESCE(v_life.recovery_ct, 0),
