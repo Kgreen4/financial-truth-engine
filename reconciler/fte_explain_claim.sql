@@ -19,7 +19,7 @@
 --   returns partial JSON with null monetary fields and an advisory summary.
 --   Does not raise an exception.
 --
--- Prerequisites: migrations 001–012 applied; fte_reconcile_practice registered.
+-- Prerequisites: migrations 001–014 applied; fte_reconcile_practice registered.
 -- Run as a database role with ordinary read access to the FTE tables in the target environment.
 -- =============================================================================
 
@@ -43,6 +43,7 @@ DECLARE
   v_appeal_window_days     integer;
   v_appeal_deadline        date;
   v_appeal_deadline_status text;
+  v_recoverability_trace   jsonb;
 BEGIN
 
   -- =========================================================================
@@ -187,6 +188,148 @@ BEGIN
     WHEN v_appeal_deadline >= CURRENT_DATE THEN 'open'
     ELSE 'expired'
   END;
+
+  -- =========================================================================
+  -- Step 2e (Task 022B): recoverability trace. Reporting/governance only —
+  -- shows WHICH fte_denial_knowledge rule drove each denial's recoverability
+  -- and whether the re-derived total matches the stored recoverable_amount.
+  --
+  -- Re-derives Phase 6b's match INLINE at explain-time using the identical
+  -- specificity logic (practice+8 / payer+4 / carc+2 / rarc+1; wildcard = NULL
+  -- field; highest score wins; among top-score rows recoverable ONLY if
+  -- bool_and(recoverable) is true; no-match or top-score disagreement fails
+  -- closed to non-recoverable). It reads the same amount-bearing denial_posted
+  -- events (amount IS NOT NULL) Phase 6b uses. It does NOT alter stored
+  -- recoverable_amount, positions, status, events, or the review queue.
+  --
+  -- CONSISTENCY CAVEAT: recoverable_amount is stored at reconcile time; this
+  -- trace re-derives against the CURRENT knowledge table. If a knowledge row is
+  -- edited between reconcile and explain, the two can diverge — the `consistent`
+  -- flag (rederived == stored) surfaces exactly that. Persisting the reconcile-
+  -- time winner is deferred (Task 022X). Independent of the Step 2d appeal-window
+  -- match — the two may legitimately select different knowledge rows.
+  --
+  -- Per denial event: match_status ∈ matched | no_match | conflict. The winning
+  -- rule's identity (denial_knowledge_id, matched_scope, rule_governance) is
+  -- surfaced ONLY when there is a single unique top-score row (matched winner);
+  -- no_match, conflict, and equally-specific ties never invent a winner.
+  -- denial_knowledge_id is a SECONDARY, OPAQUE reference (synthetic, volatile
+  -- across re-seeds) — matched_scope + match_score + rule_governance are the
+  -- primary, stable audit explanation.
+  -- =========================================================================
+  IF v_pos IS NULL THEN
+    v_recoverability_trace := NULL;
+  ELSE
+    WITH de AS (
+      SELECT ce.id AS event_id, ce.amount, ce.carc_code, ce.rarc_code,
+             ce.payer_name, ce.created_at
+      FROM   fte_claim_events ce
+      WHERE  ce.practice_id = p_practice_id
+        AND  ce.claim_id    = p_claim_id
+        AND  ce.event_type  = 'denial_posted'
+        AND  ce.amount IS NOT NULL
+    ),
+    scored AS (
+      SELECT de.event_id, de.amount, de.carc_code, de.rarc_code, de.created_at,
+             dk.id AS dk_id, dk.recoverable AS dk_rec, dk.practice_id AS dk_practice,
+             dk.payer_name AS dk_payer, dk.carc_code AS dk_carc, dk.rarc_code AS dk_rarc,
+             dk.category, dk.subcategory, dk.default_action, dk.default_owner,
+             dk.evidence_requirements,
+             (CASE WHEN dk.practice_id IS NOT NULL THEN 8 ELSE 0 END
+            + CASE WHEN dk.payer_name  IS NOT NULL THEN 4 ELSE 0 END
+            + CASE WHEN dk.carc_code   IS NOT NULL THEN 2 ELSE 0 END
+            + CASE WHEN dk.rarc_code   IS NOT NULL THEN 1 ELSE 0 END) AS score
+      FROM   de
+      LEFT JOIN fte_denial_knowledge dk
+        ON  (dk.practice_id = p_practice_id OR dk.practice_id IS NULL)
+        AND (dk.payer_name  = de.payer_name OR dk.payer_name  IS NULL)
+        AND (dk.carc_code   = de.carc_code  OR dk.carc_code   IS NULL)
+        AND (dk.rarc_code   = de.rarc_code  OR dk.rarc_code   IS NULL)
+    ),
+    maxs AS (
+      SELECT event_id, MAX(score) AS max_score
+      FROM   scored WHERE dk_id IS NOT NULL
+      GROUP BY event_id
+    ),
+    top AS (
+      SELECT s.*
+      FROM   scored s
+      JOIN   maxs m ON m.event_id = s.event_id AND s.score = m.max_score
+      WHERE  s.dk_id IS NOT NULL
+    ),
+    per_event AS (
+      SELECT de.event_id, de.amount, de.carc_code, de.rarc_code, de.created_at,
+             COUNT(t.dk_id)                       AS top_count,
+             COALESCE(bool_and(t.dk_rec), false)  AS is_recoverable,
+             MAX(t.score)                         AS max_score,
+             MIN(t.dk_id::text)                   AS w_dk_id,
+             bool_or(t.dk_practice IS NOT NULL)   AS w_practice,
+             MIN(t.dk_payer)                      AS w_payer,
+             MIN(t.dk_carc)                       AS w_carc,
+             MIN(t.dk_rarc)                       AS w_rarc,
+             MIN(t.category)                      AS w_category,
+             MIN(t.subcategory)                   AS w_subcategory,
+             MIN(t.default_action)                AS w_default_action,
+             MIN(t.default_owner)                 AS w_default_owner,
+             MIN(t.evidence_requirements)         AS w_evidence_requirements,
+             COUNT(DISTINCT t.dk_rec)             AS distinct_rec
+      FROM   de
+      LEFT JOIN top t ON t.event_id = de.event_id
+      GROUP BY de.event_id, de.amount, de.carc_code, de.rarc_code, de.created_at
+    )
+    SELECT jsonb_build_object(
+      'stored_recoverable_amount',
+         CASE WHEN v_pos.recoverable_amount IS NULL THEN NULL
+              ELSE to_char(v_pos.recoverable_amount, 'FM999999999999990.00') END,
+      'rederived_recoverable_amount',
+         CASE WHEN COUNT(*) = 0 THEN NULL
+              ELSE to_char(COALESCE(SUM(pe.amount) FILTER (WHERE pe.is_recoverable), 0),
+                           'FM999999999999990.00') END,
+      -- consistent: re-derived total equals the stored value (NULL-safe).
+      -- true for the normal reconcile-then-explain path; false flags drift from
+      -- knowledge edited after reconcile (see caveat above).
+      'consistent',
+         (CASE WHEN COUNT(*) = 0 THEN NULL::numeric
+               ELSE COALESCE(SUM(pe.amount) FILTER (WHERE pe.is_recoverable), 0) END)
+           IS NOT DISTINCT FROM v_pos.recoverable_amount,
+      'denials',
+         COALESCE(
+           jsonb_agg(
+             jsonb_build_object(
+               'denied_amount',       to_char(pe.amount, 'FM999999999999990.00'),
+               'carc_code',           pe.carc_code,
+               'rarc_code',           pe.rarc_code,
+               'match_status',        CASE WHEN pe.top_count = 0    THEN 'no_match'
+                                           WHEN pe.distinct_rec > 1 THEN 'conflict'
+                                           ELSE 'matched' END,
+               'match_score',         pe.max_score,
+               'is_recoverable',      pe.is_recoverable,
+               -- winner identity ONLY for a single unique top-score row.
+               'matched_scope',       CASE WHEN pe.top_count = 1
+                                           THEN jsonb_build_object(
+                                                  'practice', pe.w_practice,
+                                                  'payer',    pe.w_payer,
+                                                  'carc',     pe.w_carc,
+                                                  'rarc',     pe.w_rarc)
+                                           ELSE NULL END,
+               'denial_knowledge_id', CASE WHEN pe.top_count = 1 THEN pe.w_dk_id ELSE NULL END,
+               'rule_governance',     CASE WHEN pe.top_count = 1
+                                           THEN jsonb_build_object(
+                                                  'category',              pe.w_category,
+                                                  'subcategory',           pe.w_subcategory,
+                                                  'default_action',        pe.w_default_action,
+                                                  'default_owner',         pe.w_default_owner,
+                                                  'evidence_requirements', pe.w_evidence_requirements)
+                                           ELSE NULL END
+             )
+             ORDER BY pe.created_at, pe.event_id
+           ) FILTER (WHERE pe.event_id IS NOT NULL),
+           '[]'::jsonb
+         )
+    )
+    INTO v_recoverability_trace
+    FROM per_event pe;
+  END IF;
 
   -- =========================================================================
   -- Step 3: Build events array.
@@ -342,6 +485,13 @@ BEGIN
                                            ELSE to_char(GREATEST(0, v_pos.recoverable_amount
                                                         - COALESCE(v_pos.recovered_amount, 0)),
                                                         'FM999999999999990.00') END,
+    -- recoverability_trace (Task 022B): reporting/governance-only nested object
+    -- showing which fte_denial_knowledge rule drove each denial's recoverability
+    -- (matched_scope / match_score / rule_governance are the primary explanation;
+    -- denial_knowledge_id is a secondary opaque reference), plus stored vs
+    -- re-derived totals and a `consistent` flag. NULL when no position exists.
+    -- Implies NO accounting/status/review-routing change. See Step 2e.
+    'recoverability_trace',           v_recoverability_trace,
     -- appeal_filed: reporting marker only (an appeal_filed event exists); it
     -- implies NO accounting change.
     'appeal_filed',                   COALESCE(v_life.appeal_ct, 0) > 0,
