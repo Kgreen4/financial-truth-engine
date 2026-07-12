@@ -183,6 +183,22 @@ safe to rerun), then rerun the failing suite.
 
 ## 5. Position-level resolution model
 
+> **Authoritative source for reviewer-action semantics: `fte_action_effects`.**
+> Which reconciler phase each `fte_review_resolutions.action` affects, and how, is
+> recorded declaratively in the `fte_action_effects` reference table
+> (`migrations/014_action_effects_reference.sql`). That table — not this prose — is
+> the single source of truth, and CI enforces it:
+> `scripts/guards/check_action_effects_consistency.sh` checks the table against the
+> action strings actually used in `reconciler/fte_reconcile.sql`, and
+> `tests/validate_action_effects.sql` checks the table against the action vocabulary.
+> Together they catch drift between the table, the vocabulary, and the reconciler
+> source. The rows are **hand-authored and human-reviewed, never AI-inferred**.
+> The reconciler still does **not** read `fte_action_effects` at runtime — it is
+> documentation/CI-only; runtime consultation remains deferred (see the Task 021A
+> design). The per-action subsections below describe each action's rationale and
+> validation; for the cross-action "which phase does what" comparison, query
+> `fte_action_effects` rather than relying on a hand-maintained table here.
+
 Two position-level reviewer actions are implemented: `dismiss_short_pay` and
 `confirm_short_pay`. Both suppress generic unbalanced-position triage routing
 without altering the mathematical position derived by Phase 6. They differ in
@@ -625,20 +641,24 @@ Superseded rows are retained as an audit trail. Phase 0.5 loads only
 
 #### Contrast with all other position-level actions
 
-| Action | Phase 7 (`unbalanced`) | Phase 7 (`in_review`) | Phase 8 (`short_pay_detected`) | Notes required |
-|---|---|---|---|---|
-| `dismiss_short_pay` | Suppressed | Never suppressed | **Suppressed** | No |
-| `confirm_short_pay` | Suppressed | Never suppressed | Preserved | No |
-| `mark_position_resolved` | **Suppressed** | **Never suppressed** | **Preserved** | **Yes** |
-| `request_more_evidence` | Not suppressed | Not suppressed | Not suppressed | Yes |
-| `mark_position_needs_correction` | Not suppressed | Not suppressed | Not suppressed | Yes |
-| `reject_payment_event` | Not suppressed ¹ | Not suppressed ¹ | Not suppressed ¹ | **Yes** |
+The per-action, per-phase comparison (which actions suppress Phase 7 queue routing,
+which suppress the Phase 8 `short_pay_detected` event, which require notes, and which
+are durable notes with no reconciler effect) is now maintained declaratively in the
+**`fte_action_effects`** reference table rather than as a hand-maintained table here,
+which could silently drift. Query it, e.g.:
 
-¹ `reject_payment_event` is a **payment-event-level** action, not a position-level
-action. It acts in Phase 5c (suppresses `payment_applied` INSERT), not in Phase 7
-or Phase 8. The claim remains `unbalanced` and `short_pay_detected` still emits —
-with `open_balance_amount` equal to the full billed amount (no paid amount applied).
-See §5.15 for the full specification.
+```sql
+select action, phase, effect_type, category, requires_notes
+from fte_action_effects
+order by action, phase;
+```
+
+Key distinction preserved for quick reference: `dismiss_short_pay` suppresses **both**
+Phase 7 (queue) and Phase 8 (`short_pay_detected` event); `confirm_short_pay` and
+`mark_position_resolved` suppress **only** Phase 7 and preserve the Phase 8 event.
+`reject_payment_event` is a payment-event-level action (Phase 5c), not a position-level
+one — see §5.15. The table row(s) for each action, and the CI guard/validation-suite
+that keep them honest, are the authoritative reference (see the callout at the top of §5).
 
 **Validation:** `tests/validate_mark_position_resolved.sql` — 14 checks using the
 96c5c357 fixture (CLM-APC-1000 as the primary vehicle for Phase 7 suppression and
@@ -912,11 +932,22 @@ without modification.
 
 #### Coexistence with other payment-event-level actions
 
-| Action | Phase 5c (`payment_applied`) | Phase 7 (`unbalanced`) | Phase 8 (`short_pay_detected`) | Notes required |
-|---|---|---|---|---|
-| `confirm_payment_event` | **Preserved** (promotes ambiguous→reconciled) | Not suppressed | Not suppressed | No |
-| `reject_payment_event` | **Suppressed** (event not emitted) | Not suppressed | Not suppressed | Yes |
-| `assert_check_identity` | **Preserved** (no suppression) | Not suppressed | Not suppressed | **Yes** |
+The payment-event-level comparison — `confirm_payment_event` (preserves
+`payment_applied`, promoting ambiguous→reconciled), `reject_payment_event`
+(suppresses the `payment_applied` event), and `assert_check_identity` (a durable
+note that suppresses nothing) — is likewise recorded in **`fte_action_effects`**
+rather than duplicated as a hand-maintained table here. Query it for the
+authoritative per-phase effects:
+
+```sql
+select action, phase, effect_type, category, requires_notes
+from fte_action_effects
+where action in ('confirm_payment_event','reject_payment_event','assert_check_identity')
+order by action, phase;
+```
+
+See the callout at the top of §5 for how the table, the CI guard, and the validation
+suite keep this consistent with the reconciler source.
 
 #### Validation
 
