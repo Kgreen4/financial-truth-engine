@@ -35,6 +35,7 @@ tables even if temporarily deployed into the same Supabase project. The migratio
 | 3 Ledger | `fte_event_evidence` | Audit spine: links each event to evidence and/or observations (`supports` / `derived_from` / `contradicts` / `contextual`). Constraint forbids a link pointing at neither. |
 | 3 Ledger | `fte_financial_positions` | **Derived/materialized** per-claim state (billed/allowed/contractual/paid/denied/patient-resp/recoverable/open-balance + confidence + reconciliation status). One per claim. |
 | 4 Intelligence | `fte_denial_knowledge` | Editable CARC/RARC/payer rules. `practice_id IS NULL` = global default; non-null = override. |
+| Reference | `fte_action_effects` | Hand-authored declarative catalog of reviewer-action semantics: for each `fte_review_resolutions.action`, which reconciler phase(s) it affects and how (grain `(action, phase, effect_type)`; multi-effect actions have multiple rows). **Documentation/CI-only** — no runtime consumer; the reconciler does not read it. Added by migration 014 (Task 021B); CI-enforced against the reconciler source and the action vocabulary (Task 021C). See Invariant 18. |
 | 4 Intelligence | `fte_contract_terms` | Expected payer behavior per CPT/modifier and effective window. |
 | Review | `fte_review_queue` | Makes uncertainty explicit (low-confidence / conflicting / missing-link / unbalanced / suspected-duplicate / suspected-summary-row / late-retry-page-contradiction). |
 | Review | `fte_review_resolutions` | **Append-only** typed reviewer decisions (15-action vocabulary across 3 categories). Survives Phase 0 DELETE — hard FKs to stable entity tables only (`fte_practices`, `fte_claims`, `fte_observations`, `fte_evidence`). Volatile derived-row IDs are snapshot fields with no `REFERENCES` clause; they become stale after a reprocess — that is expected. Phase 0.5 loads non-superseded rows before reconciliation begins. Migration 003 adds `target_observation_id uuid references fte_observations(id) on delete restrict` plus 5 CHECK constraints for the three observation-level actions (`confirm_observation`, `reject_observation`, `mark_duplicate`) and a partial index for reverse lookup. Migration 004 adds 4 CHECK constraints for `attach_corrected_value` (requires `observation_id IS NOT NULL`, `target_type = 'observation'`, `corrected_value IS NOT NULL`, `corrected_value >= 0`) and `idx_fte_resolutions_single_active_correction` — `UNIQUE (practice_id, observation_id, action) WHERE is_superseded = false AND action = 'attach_corrected_value'` — enforcing at most one active corrected-value resolution per observation. Migration 005 adds 2 CHECK constraints for `dismiss_short_pay` (`claim_id IS NOT NULL`, `target_type = 'position'`). Migration 006 adds 2 CHECK constraints for `confirm_short_pay` (`claim_id IS NOT NULL`, `target_type = 'position'`) and `idx_fte_resolutions_single_active_position_short_pay` — `UNIQUE (practice_id, claim_id) WHERE is_superseded = false AND action IN ('confirm_short_pay', 'dismiss_short_pay')` — preventing simultaneous active rows of both actions for the same claim. To supersede: set `is_superseded = true` on the old row, then insert a new one. |
@@ -260,6 +261,26 @@ tables even if temporarily deployed into the same Supabase project. The migratio
    when grouping payment events). To replace an active assertion: UPDATE SET
    `is_superseded = true`, then INSERT a new row with the revised `corrected_identifier`.
    See `reconciler/README.md §5.16`.
+18. **`fte_action_effects` is the authoritative, CI-enforced catalog of reviewer-action
+   semantics.** Invariants 8–17 above describe each action's *constraint shape* (what a
+   valid resolution row must look like). The complementary question — *what each action
+   does to the reconciler*, i.e. which phase(s) it affects and how — is recorded
+   declaratively in the `fte_action_effects` reference table (migration 014, Task 021B),
+   one row per `(action, phase, effect_type)`, so multi-effect actions such as
+   `dismiss_short_pay` (Phase 7 queue suppression **and** Phase 8 event suppression) carry
+   multiple rows. This table, not hand-maintained prose, is the single source of truth for
+   cross-action effect comparisons; the two prose contrast tables previously kept in
+   `reconciler/README.md` (§5.14, §5.16) now point at it. Its rows are **hand-authored and
+   human-reviewed, never AI-inferred**. Two CI checks keep it honest and catch drift between
+   the table, the action vocabulary, and the reconciler source:
+   `scripts/guards/check_action_effects_consistency.sh` asserts that code-bearing actions
+   appear (and durable-note/reserved actions do NOT appear) as action-string literals in
+   `reconciler/fte_reconcile.sql`, including the Phase 7/Phase 8 membership distinctions;
+   `tests/validate_action_effects.sql` asserts vocabulary coverage, row counts, categories,
+   uniqueness, and that the table carries no foreign key. **The reconciler does not read
+   `fte_action_effects` at runtime** — it is documentation/CI-only; runtime consultation
+   (the reconciler consulting the table to decide behavior) remains deliberately deferred to
+   a separate future task (see the Task 021A design). See `reconciler/README.md §5`.
 
 ---
 
