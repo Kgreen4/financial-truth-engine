@@ -4,7 +4,7 @@ Operational handoff. Concise by design.
 
 ## Repository
 - **Repo:** `Kgreen4/financial-truth-engine`
-- **main HEAD:** `2911d94` (Task 021D merged)
+- **main HEAD:** `8054c0a` (Task 022C merged)
 - FTE now lives at the **repository root** — formerly the `financial-truth-engine/` subdirectory of `n2n-portal`, promoted to root on import.
 - **Do not use `Kgreen4/n2n-portal` for FTE anymore.** That repo is the separate **client / exodus** project and is not part of FTE.
 
@@ -20,12 +20,12 @@ Operational handoff. Concise by design.
 - `README.md`, `README_SCHEMA.md`, `NEXT_STEPS.md`
 
 ## Progress
-- **Completed through Task 021D** (merged via PR #14).
-- **Current validation baseline:** 339 PASS across twenty-five suites (329 + 10 from `validate_action_effects.sql`, added in 021C). CI floor is now `MIN_PASS_COUNT: 339`.
-- **Next:** awaiting next written task spec. Likely candidates from deferred design list:
+- **Completed through Task 022C** (denial-knowledge traces; merged via PR #17). Docs/state refreshed in 022D/S.
+- **Current validation baseline:** 365 PASS across twenty-five suites (339 + 12 recoverability-trace checks in 022B + 14 appeal-window-trace checks in 022C, all in `validate_explain_claim.sql`). CI floor is now `MIN_PASS_COUNT: 365`.
+- **Next:** pivot to **023A — MVP vertical-slice planning**. Deferred design-list candidates remain:
   - Observation/extraction-driven recovery
   - Reviewer-supplied appeal deadline override (deferred from 019A)
-  - Denial knowledge trace/governance
+  - Persisted reconcile-time denial-knowledge provenance (deferred 022X — reconciler + migration; would make the `recoverability_trace.consistent` flag fully authoritative)
   - Appeal outcome automation (deferred)
   - Deadline-driven review-queue automation (deferred from 019A)
   - Runtime consultation of `fte_action_effects` by the reconciler (deferred from 021A — higher-risk control-flow change, requires its own design + approval)
@@ -34,10 +34,10 @@ Operational handoff. Concise by design.
 - **Active on `push` and `pull_request`** — `.github/workflows/ci.yml`.
 - **Jobs:**
   - `Guardrails / static checks` — `scripts/guards/check_forbidden_refs.sh`, `scripts/guards/check_no_secrets_or_phi.sh`, `scripts/guards/check_action_effects_consistency.sh` (021C), extractor Python unit tests (`extractor/tests/`, 49 tests, stdlib-only).
-  - `Migrations + validation suites` — applies migrations 001–014 in order against a fresh **vanilla `postgres:16`** GitHub Actions service container, registers the reconciler functions, runs `tests/run_all_validations.sql`, and asserts zero SQL errors and a PASS count `>= 339` (`MIN_PASS_COUNT`, raised from 329 in 021C; fails if the count drops below baseline).
+  - `Migrations + validation suites` — applies migrations 001–014 in order against a fresh **vanilla `postgres:16`** GitHub Actions service container, registers the reconciler functions, runs `tests/run_all_validations.sql`, and asserts zero SQL errors and a PASS count `>= 365` (`MIN_PASS_COUNT`, raised 329→339 in 021C, 339→351 in 022B, 351→365 in 022C; fails if the count drops below baseline).
 - **Database strategy:** vanilla Postgres, not Supabase — this schema has no real Supabase dependency (only `pgcrypto`, which ships with the official `postgres` image; `auth.uid()` appears only in a comment, never called; zero `anon`/`authenticated`/`service_role` grants anywhere). Full enumeration in `docs/adr/ADR-001-ci-and-agent-guardrails.md`.
 - **No live AI/API secrets in CI.** No `OPENAI_API_KEY`, no Supabase service-role key, no repository secrets required.
-- Verified green on genuine fresh-database runs (not just locally): baseline `339 PASS, 0 errors, exit 0`.
+- Verified green on genuine fresh-database runs (not just locally): baseline `365 PASS, 0 errors, exit 0`.
 
 ## Agent operating contract (Task 020A)
 - `AGENTS.md` expanded with: Stack, Canonical Commands, Definition of Done, Work Tiers, Stop-and-Ask Rules — in addition to the pre-existing Hard Rules (unchanged, preserved verbatim).
@@ -72,6 +72,11 @@ Operational handoff. Concise by design.
 - **021B** — `fte_action_effects` reference table (migration 014; 25 hand-authored rows covering all 19 actions; multi-effect actions carry multiple rows). No reconciler/explain/accounting change; no runtime consumer.
 - **021C** — action-effects consistency guard + validation suite (`scripts/guards/check_action_effects_consistency.sh` table-vs-reconciler; `tests/validate_action_effects.sql` table-vs-vocabulary, +10 checks → 339; CI floor raised 329 → 339). No reconciler/explain/accounting change.
 - **021D** — reviewer-action documentation consolidation (`reconciler/README.md` §5.14/§5.16 and `README_SCHEMA.md` now point at `fte_action_effects` as the single source of truth). Docs-only.
+- **021S** — project state handoff doc, refreshed through the 021 arc.
+- **022A** — denial-knowledge trace & governance design (explain-only re-derived traces; persisted provenance deferred as 022X).
+- **022B** — `recoverability_trace` in `fte_explain_claim` (per-denial re-derived Phase 6b match + stored-vs-re-derived `consistent` flag; +12 checks → 351; CI floor 339 → 351). Explain-only; no migration/reconciler/accounting change.
+- **022C** — `appeal_window_trace` in `fte_explain_claim` (driving-denial descriptor for the surfaced window/deadline; independent of `recoverability_trace`; +14 checks → 365; CI floor 351 → 365). Explain-only; no migration/reconciler/accounting change.
+- **022D/S** — denial-knowledge-trace documentation (`README_SCHEMA.md` Invariant 19) + this state refresh. Docs-only.
 
 ## Accounting model notes
 - **Money-moving lifecycle levers:** `record_recovery` and `approve_write_off` only. These reclassify from the gross denied pool.
@@ -93,6 +98,14 @@ Operational handoff. Concise by design.
 - **Hand-authored, never AI-inferred.** Rows are human-transcribed from `fte_reconcile.sql` and migrations 002–013.
 - **CI-enforced against drift:** `check_action_effects_consistency.sh` asserts code-bearing actions appear (and durable-note/reserved actions do not) in `fte_reconcile.sql`, incl. the Phase 7/8 membership distinctions; `validate_action_effects.sql` asserts vocabulary coverage, row counts, categories, uniqueness, and no FK.
 - The prose contrast tables previously in `reconciler/README.md` §5.14/§5.16 now point at this table (021D); `README_SCHEMA.md` Invariant 18 documents it.
+
+## Denial-knowledge traces (Task 022 arc)
+- **`fte_explain_claim`** surfaces two independent, **reporting/explain-only** governance objects showing *which* `fte_denial_knowledge` rule drove a derived value: `recoverability_trace` (022B) and `appeal_window_trace` (022C).
+- Both **re-derive the current `fte_denial_knowledge` match inline at explain time** (identical specificity `practice+8 / payer+4 / carc+2 / rarc+1`, unanimous top-score or fail-closed). Nothing is persisted; `fte_reconcile.sql` is unchanged; no runtime consumer.
+- **Primary audit explanation:** `matched_scope` + `match_score` + `rule_governance` (the rule's category/subcategory/default_action/default_owner/evidence_requirements). **`denial_knowledge_id` is secondary/opaque** (synthetic, volatile across re-seeds).
+- The two traces are **independent and may select different rules for the same denial** — the appeal-window match additionally filters `appeal_window_days IS NOT NULL`.
+- `recoverability_trace` echoes stored vs re-derived `recoverable_amount` with a `consistent` flag (surfaces drift if knowledge is edited after reconcile). **Persisted reconcile-time provenance remains deferred (022X).**
+- **No accounting/status/review-routing/event-emission behavior changed.** Documented in `README_SCHEMA.md` Invariant 19.
 
 ## Safety rails
 - No PHI, no credentials, no project refs, no real identifiers, no `raw_text`, no evidence quotes.
