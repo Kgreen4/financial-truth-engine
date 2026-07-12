@@ -17,6 +17,9 @@ jobs:
       - name: check_no_secrets_or_phi.sh
         run: bash scripts/guards/check_no_secrets_or_phi.sh
 
+      - name: check_action_effects_consistency.sh
+        run: bash scripts/guards/check_action_effects_consistency.sh
+
       - name: Extractor unit tests (stdlib only, no network, no live API key)
         run: python3 -m unittest discover -s extractor/tests -t extractor
 
@@ -39,7 +42,7 @@ jobs:
           --health-retries=10
     env:
       DATABASE_URL: postgres://postgres:postgres@localhost:5432/fte_ci
-      MIN_PASS_COUNT: 329
+      MIN_PASS_COUNT: 339
     steps:
       - uses: actions/checkout@v4
 
