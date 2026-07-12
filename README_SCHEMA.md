@@ -281,6 +281,25 @@ tables even if temporarily deployed into the same Supabase project. The migratio
    `fte_action_effects` at runtime** — it is documentation/CI-only; runtime consultation
    (the reconciler consulting the table to decide behavior) remains deliberately deferred to
    a separate future task (see the Task 021A design). See `reconciler/README.md §5`.
+19. **Denial-knowledge traces are explain-only and re-derived, never persisted.**
+   `fte_explain_claim` surfaces two independent, reporting-only governance objects that show
+   *which* `fte_denial_knowledge` rule drove a derived value: `recoverability_trace` (Task 022B —
+   per denial event, which rule made it recoverable, plus stored-vs-re-derived
+   `recoverable_amount` and a `consistent` flag) and `appeal_window_trace` (Task 022C — the denial
+   that produced the surfaced `appeal_window_days` / `appeal_deadline` / `appeal_deadline_status`).
+   Both **re-derive the current `fte_denial_knowledge` match inline at explain time** (identical
+   specificity scoring `practice+8 / payer+4 / carc+2 / rarc+1`, unanimous top-score or fail-closed);
+   nothing is persisted and the reconciler is unchanged. `matched_scope` + `match_score` +
+   `rule_governance` (the rule's `category` / `subcategory` / `default_action` / `default_owner` /
+   `evidence_requirements`) are the **primary audit explanation**; `denial_knowledge_id` is a
+   **secondary, opaque** reference (synthetic, volatile across re-seeds). The two traces are
+   **independent** and may name different rules for the same denial (the appeal-window match
+   additionally filters `appeal_window_days IS NOT NULL`, so a rule can drive recoverability but not
+   the window, and vice versa). Because `recoverable_amount` is stored at reconcile time but the
+   trace re-derives against current knowledge, the `consistent` flag surfaces any drift; **persisted
+   reconcile-time provenance is deliberately deferred** (Task 022X, see the Task 022A design). The
+   traces imply **no accounting, status, review-routing, or event-emission change** and have no
+   runtime consumer.
 
 ---
 
