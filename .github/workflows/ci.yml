@@ -65,3 +65,17 @@ jobs:
         env:
           FTE_DB_TARGET_LABEL: disposable-test
         run: bash tests/validate_mvp_runner.sh
+
+      # Task 023E: generate the MVP Financial Truth Report to a stable path and
+      # publish it as a CI artifact, so it can be reviewed without local DB
+      # credentials. Read-only demo run; no SQL PASS lines, no floor change.
+      - name: Generate MVP Financial Truth Report (CI artifact)
+        env:
+          FTE_DB_TARGET_LABEL: disposable-test
+        run: bash scripts/mvp/run_mvp.sh mvp_output/financial_truth_report_ci.md
+
+      - name: Upload MVP Financial Truth Report artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: financial-truth-mvp-report
+          path: mvp_output/financial_truth_report_ci.md
