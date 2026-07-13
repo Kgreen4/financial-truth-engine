@@ -26,7 +26,7 @@ for f in migrations/*.sql; do
 done
 
 echo "== Registering reconciler functions =="
-for f in reconciler/fte_reconcile.sql reconciler/fte_explain_claim.sql reconciler/fte_mock_extract_observations.sql; do
+for f in reconciler/fte_reconcile.sql reconciler/fte_explain_claim.sql reconciler/fte_mock_extract_observations.sql reconciler/fte_claim_report.sql reconciler/fte_practice_report.sql; do
   echo "-- $f"
   "$PSQL_BIN" -v ON_ERROR_STOP=1 "$DATABASE_URL" -f "$f"
 done
