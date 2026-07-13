@@ -56,3 +56,12 @@ jobs:
 
       - name: Run validation suites (asserts zero errors, PASS count >= 329)
         run: bash scripts/ci/run_validations.sh
+
+      # MVP one-command runner smoke test (Task 023C). Shell-only assertions —
+      # does NOT contribute SQL PASS lines, so MIN_PASS_COUNT stays 379. The CI
+      # postgres service is disposable, so the runner's disposable-test guard is
+      # satisfied by setting the label for this step only.
+      - name: MVP runner smoke test (scripts/mvp/run_mvp.sh)
+        env:
+          FTE_DB_TARGET_LABEL: disposable-test
+        run: bash tests/validate_mvp_runner.sh
