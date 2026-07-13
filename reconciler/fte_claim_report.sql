@@ -11,9 +11,11 @@
 -- Surfaces: identity, status, billed/adjustments/paid/open, denied/recoverable/
 -- non-recoverable, appeal window/deadline/status, a "NEEDS REVIEW" line from the
 -- review queue, and a short denial-knowledge trace summary (022B recoverability +
--- 022C appeal-window): match_status / match_score / matched_scope / rule_governance.
--- denial_knowledge_id is intentionally NOT printed (it is a secondary, opaque
--- reference); the stable scope + score + governance are the human explanation.
+-- 022C appeal-window), worded for a business reader while preserving the audit
+-- values: match_status, match_score (as "confidence score"), matched_scope, and
+-- rule_governance (category/action/owner). denial_knowledge_id is intentionally
+-- NOT printed (it is a secondary, opaque reference); the stable scope + score +
+-- governance are the human explanation.
 --
 -- Prerequisites: fte_explain_claim registered (which needs the reconciler run
 -- first to materialize positions). Register AFTER fte_explain_claim.sql.
@@ -73,16 +75,16 @@ BEGIN
      AND jsonb_array_length(COALESCE(v->'recoverability_trace'->'denials', '[]'::jsonb)) > 0 THEN
     r := r || '  Recoverability trace:' || E'\n';
     FOR v_d IN SELECT * FROM jsonb_array_elements(v->'recoverability_trace'->'denials') LOOP
-      r := r || format('    - denied $%s: match_status=%s score=%s',
+      r := r || format('    - Denied $%s: %s (confidence score %s)',
             v_d->>'denied_amount', v_d->>'match_status',
             COALESCE(v_d->>'match_score', 'n/a'));
       IF jsonb_typeof(v_d->'matched_scope') = 'object' THEN
-        r := r || format(' scope=[carc=%s payer=%s]',
+        r := r || format(' on scope=[carc=%s payer=%s]',
               COALESCE(v_d->'matched_scope'->>'carc', '*'),
               COALESCE(v_d->'matched_scope'->>'payer', '*'));
       END IF;
       IF jsonb_typeof(v_d->'rule_governance') = 'object' THEN
-        r := r || format(' governance=[category=%s action=%s owner=%s]',
+        r := r || format(' → rule: category=%s action=%s owner=%s',
               COALESCE(v_d->'rule_governance'->>'category', '-'),
               COALESCE(v_d->'rule_governance'->>'default_action', '-'),
               COALESCE(v_d->'rule_governance'->>'default_owner', '-'));
@@ -96,13 +98,13 @@ BEGIN
   -- Appeal-window trace (022C): the rule that drove the surfaced deadline.
   IF v->'appeal_window_trace'->>'status' = 'matched' THEN
     v_de := v->'appeal_window_trace'->'driving_event';
-    r := r || format('  Appeal-window trace: match_status=%s score=%s',
+    r := r || format('  Appeal-window trace: %s (confidence score %s)',
           v_de->>'match_status', COALESCE(v_de->>'match_score', 'n/a'));
     IF jsonb_typeof(v_de->'matched_scope') = 'object' THEN
-      r := r || format(' scope=[carc=%s]', COALESCE(v_de->'matched_scope'->>'carc', '*'));
+      r := r || format(' on scope=[carc=%s]', COALESCE(v_de->'matched_scope'->>'carc', '*'));
     END IF;
     IF jsonb_typeof(v_de->'rule_governance') = 'object' THEN
-      r := r || format(' governance=[category=%s action=%s]',
+      r := r || format(' → rule: category=%s action=%s',
             COALESCE(v_de->'rule_governance'->>'category', '-'),
             COALESCE(v_de->'rule_governance'->>'default_action', '-'));
     END IF;
