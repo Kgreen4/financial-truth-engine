@@ -27,6 +27,35 @@ The difference matters: the PDF is evidence, not truth. AI extracts observations
 
 ---
 
+## Quick Start — MVP Demo (one command)
+
+Run the end-to-end MVP against a **disposable** test database and get a human-readable
+**Financial Truth Report** — no AI, no PHI, synthetic data only:
+
+```bash
+FTE_DB_TARGET_LABEL=disposable-test DATABASE_URL=postgres://… \
+  scripts/mvp/run_mvp.sh [output_file]
+```
+
+- **Output file** (optional first arg): defaults to `mvp_output/financial_truth_report.md`
+  (the directory is created if missing). Example:
+  `scripts/mvp/run_mvp.sh mvp_output/financial_truth_report.md`
+- **What it does:** applies the schema/functions if needed, loads the synthetic MVP batch
+  (`fixtures/synthetic_mvp_batch.sql`), runs `fte_reconcile_practice`, renders
+  `fte_practice_report`, and writes a markdown/plain-text report.
+- **Output:** a Financial Truth Report showing balanced claims, a short-pay claim flagged
+  **NEEDS REVIEW**, a **recoverable** denial with an **appeal deadline** (open) and an
+  **expired** one, plus the denial-knowledge trace summaries (recoverability + appeal-window)
+  that name the governing rule.
+- **Safety:** refuses to run unless `FTE_DB_TARGET_LABEL=disposable-test`; requires
+  `DATABASE_URL` but never prints it; synthetic data only.
+
+**Current validation:** 379 SQL PASS checks across twenty-six suites, plus the MVP runner
+shell smoke test (`tests/validate_mvp_runner.sh`, 10/10) — all green in CI on a fresh
+`postgres:16` database. Generated reports land under `mvp_output/` (git-ignored).
+
+---
+
 ## Design Principle
 
 Do not ask AI to decide final financial truth.

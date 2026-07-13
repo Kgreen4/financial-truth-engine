@@ -3,3 +3,6 @@
 __pycache__/
 *.py[cod]
 .pytest_cache/
+
+# Generated MVP demo output (scripts/mvp/run_mvp.sh)
+mvp_output/
