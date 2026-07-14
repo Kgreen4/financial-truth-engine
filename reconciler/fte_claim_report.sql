@@ -11,11 +11,13 @@
 -- Surfaces: identity, status, billed/adjustments/paid/open, denied/recoverable/
 -- non-recoverable, appeal window/deadline/status, a "NEEDS REVIEW" line from the
 -- review queue, and a short denial-knowledge trace summary (022B recoverability +
--- 022C appeal-window), worded for a business reader while preserving the audit
--- values: match_status, match_score (as "confidence score"), matched_scope, and
--- rule_governance (category/action/owner). denial_knowledge_id is intentionally
--- NOT printed (it is a secondary, opaque reference); the stable scope + score +
--- governance are the human explanation.
+-- 022C appeal-window), worded in plain business language (Task 024B) while
+-- preserving the audit values: match_status ("matched with high confidence
+-- (N/10)"), matched_scope ("on denial code X and <any payer|payer Y>"), and
+-- rule_governance (category/recommended action/owner, underscores rendered as
+-- spaces). denial_knowledge_id is intentionally NOT printed (it is a secondary,
+-- opaque reference); the stable scope + score + governance are the human
+-- explanation.
 --
 -- Prerequisites: fte_explain_claim registered (which needs the reconciler run
 -- first to materialize positions). Register AFTER fte_explain_claim.sql.
@@ -75,38 +77,50 @@ BEGIN
      AND jsonb_array_length(COALESCE(v->'recoverability_trace'->'denials', '[]'::jsonb)) > 0 THEN
     r := r || '  Recoverability trace:' || E'\n';
     FOR v_d IN SELECT * FROM jsonb_array_elements(v->'recoverability_trace'->'denials') LOOP
-      r := r || format('    - Denied $%s: %s (confidence score %s)',
-            v_d->>'denied_amount', v_d->>'match_status',
-            COALESCE(v_d->>'match_score', 'n/a'));
+      r := r || format('    - Denied $%s: ', v_d->>'denied_amount');
+      IF v_d->>'match_status' = 'matched' THEN
+        r := r || format('matched with high confidence (%s/10)', COALESCE(v_d->>'match_score', '?'));
+      ELSE
+        r := r || COALESCE(v_d->>'match_status', 'unknown match status');
+      END IF;
       IF jsonb_typeof(v_d->'matched_scope') = 'object' THEN
-        r := r || format(' on scope=[carc=%s payer=%s]',
-              COALESCE(v_d->'matched_scope'->>'carc', '*'),
-              COALESCE(v_d->'matched_scope'->>'payer', '*'));
+        r := r || format(' on denial code %s and %s',
+              COALESCE(v_d->'matched_scope'->>'carc', 'any code'),
+              CASE WHEN COALESCE(v_d->'matched_scope'->>'payer', '*') = '*'
+                   THEN 'any payer'
+                   ELSE 'payer ' || (v_d->'matched_scope'->>'payer') END);
       END IF;
       IF jsonb_typeof(v_d->'rule_governance') = 'object' THEN
-        r := r || format(' → rule: category=%s action=%s owner=%s',
-              COALESCE(v_d->'rule_governance'->>'category', '-'),
-              COALESCE(v_d->'rule_governance'->>'default_action', '-'),
-              COALESCE(v_d->'rule_governance'->>'default_owner', '-'));
+        r := r || format(' → category: %s, recommended action: %s, owner: %s',
+              REPLACE(COALESCE(v_d->'rule_governance'->>'category', '-'), '_', ' '),
+              REPLACE(COALESCE(v_d->'rule_governance'->>'default_action', '-'), '_', ' '),
+              REPLACE(COALESCE(v_d->'rule_governance'->>'default_owner', '-'), '_', ' '));
       END IF;
       r := r || E'\n';
     END LOOP;
-    r := r || format('    (recoverable total consistent with stored position: %s)',
-          COALESCE(v->'recoverability_trace'->>'consistent', '?')) || E'\n';
+    IF (v->'recoverability_trace'->>'consistent') = 'true' THEN
+      r := r || '    This matches the recorded recoverable amount.' || E'\n';
+    ELSE
+      r := r || '    This does not match the recorded recoverable amount (recorded value may be out of date).' || E'\n';
+    END IF;
   END IF;
 
   -- Appeal-window trace (022C): the rule that drove the surfaced deadline.
   IF v->'appeal_window_trace'->>'status' = 'matched' THEN
     v_de := v->'appeal_window_trace'->'driving_event';
-    r := r || format('  Appeal-window trace: %s (confidence score %s)',
-          v_de->>'match_status', COALESCE(v_de->>'match_score', 'n/a'));
+    r := r || '  Appeal-window trace: ';
+    IF v_de->>'match_status' = 'matched' THEN
+      r := r || format('matched with high confidence (%s/10)', COALESCE(v_de->>'match_score', '?'));
+    ELSE
+      r := r || COALESCE(v_de->>'match_status', 'unknown match status');
+    END IF;
     IF jsonb_typeof(v_de->'matched_scope') = 'object' THEN
-      r := r || format(' on scope=[carc=%s]', COALESCE(v_de->'matched_scope'->>'carc', '*'));
+      r := r || format(' on denial code %s', COALESCE(v_de->'matched_scope'->>'carc', 'any code'));
     END IF;
     IF jsonb_typeof(v_de->'rule_governance') = 'object' THEN
-      r := r || format(' → rule: category=%s action=%s',
-            COALESCE(v_de->'rule_governance'->>'category', '-'),
-            COALESCE(v_de->'rule_governance'->>'default_action', '-'));
+      r := r || format(' → category: %s, recommended action: %s',
+            REPLACE(COALESCE(v_de->'rule_governance'->>'category', '-'), '_', ' '),
+            REPLACE(COALESCE(v_de->'rule_governance'->>'default_action', '-'), '_', ' '));
     END IF;
     r := r || E'\n';
   END IF;
