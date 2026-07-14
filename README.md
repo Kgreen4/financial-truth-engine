@@ -46,21 +46,27 @@ FTE_DB_TARGET_LABEL=disposable-test DATABASE_URL=postgres://… \
 - **Output:** a Financial Truth Report showing balanced claims, a short-pay claim flagged
   **NEEDS REVIEW**, a **recoverable** denial with an **appeal deadline** (open) and an
   **expired** one, plus the denial-knowledge trace summaries (recoverability + appeal-window)
-  that name the governing rule. Task 024A polished the wording for demo readability: an
+  that name the governing rule. Tasks 024A/024B polished the wording for demo readability: an
   **Executive summary** line up top (review-exception count, recoverable-denial opportunity,
   open-appeal-deadline count), clarified summary labels (**"Financially balanced"**,
-  **"Total recoverable denied amount"**), and business-readable trace phrasing
-  ("matched (confidence score N) ... → rule: category=... action=... owner=...") — all
-  underlying audit values (match_status, match_score, matched scope, governance
-  category/action/owner) are preserved, unchanged.
+  **"Total recoverable denied amount"**), and fully business-readable trace phrasing
+  ("matched with high confidence (10/10) on denial code MVP-REC and any payer → category:
+  contractual adjustment, recommended action: file appeal, owner: billing team", plus "This
+  matches the recorded recoverable amount." in place of a raw true/false footer) — all
+  underlying audit values (match status, confidence score, denial code/payer scope,
+  governance category/action/owner) are preserved, unchanged.
 - **Safety:** refuses to run unless `FTE_DB_TARGET_LABEL=disposable-test`; requires
   `DATABASE_URL` but never prints it; synthetic data only.
 - **No local DB needed to review it:** CI (Task 023E) publishes the generated report as a
   GitHub Actions artifact named `financial-truth-mvp-report` on every run.
 
-**Current validation:** 382 SQL PASS checks across twenty-six suites, plus the MVP runner
+**Current validation:** 384 SQL PASS checks across twenty-six suites, plus the MVP runner
 shell smoke test (`tests/validate_mvp_runner.sh`, 10/10) — all green in CI on a fresh
 `postgres:16` database. Generated reports land under `mvp_output/` (git-ignored).
+
+**MVP v0.1 is demo-ready** as of Task 024B — the report is fully business-readable with no
+remaining debug/internal syntax, while every audit value (match status, confidence score,
+denial code, payer scope, category, action, owner) is preserved.
 
 ---
 

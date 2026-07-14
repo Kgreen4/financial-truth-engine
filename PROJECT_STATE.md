@@ -4,7 +4,7 @@ Operational handoff. Concise by design.
 
 ## Repository
 - **Repo:** `Kgreen4/financial-truth-engine`
-- **main HEAD:** `7d51633` (Task 024A merged)
+- **main HEAD:** `2d14ef1` (Task 024B merged)
 - FTE now lives at the **repository root** — formerly the `financial-truth-engine/` subdirectory of `n2n-portal`, promoted to root on import.
 - **Do not use `Kgreen4/n2n-portal` for FTE anymore.** That repo is the separate **client / exodus** project and is not part of FTE.
 
@@ -21,11 +21,12 @@ Operational handoff. Concise by design.
 - `README.md`, `README_SCHEMA.md`, `NEXT_STEPS.md`
 
 ## Progress
-- **Completed through Task 024A** (MVP report wording polish; merged via PR #23). Docs/state refreshed in 024S.
+- **Completed through Task 024B** (MVP report wording finalized; merged via PR #26). Docs/state refreshed in this 024S pass.
+- **MVP v0.1 is demo-ready.** The Financial Truth Report is fully business-readable — no remaining debug/internal syntax — while every audit value (match status, confidence score, denial code/payer scope, governance category/action/owner) is preserved.
 - **The MVP is demonstrable with one command:** `scripts/mvp/run_mvp.sh` loads the synthetic MVP batch, reconciles, and writes a human-readable **Financial Truth Report** (balanced claims, a short-pay review exception, a recoverable denial with an open appeal deadline, an expired one, and denial-knowledge trace summaries). Proven in CI on a fresh database. CI (023E) also publishes the generated report as a GitHub Actions artifact (`financial-truth-mvp-report`), so it can be reviewed without a local disposable-test `DATABASE_URL`.
-- **024A polished the report for demo readability** (no engine/accounting change): an **Executive summary** line (review-exception count, recoverable-denial opportunity, open-appeal-deadline count); clarified summary labels **"Financially balanced"** and **"Total recoverable denied amount"**; and business-readable trace phrasing (`matched (confidence score N) ... → rule: category=... action=... owner=...`). All underlying audit values (`match_status`, `match_score`, `matched_scope`, `rule_governance`) are preserved unchanged — only surrounding wording changed.
-- **Current validation baseline:** 382 SQL PASS across twenty-six suites (365 + 17 MVP-report checks in `validate_mvp_report.sql` — 14 from 023B, +3 in 024A for the polished wording) **plus** the shell MVP-runner smoke test (`tests/validate_mvp_runner.sh`, 10/10 — shell-only, does not affect the SQL count). CI floor is now `MIN_PASS_COUNT: 382`. CI remains green; the MVP report artifact still uploads on every run.
-- **Next: demo review / feedback** on the polished MVP report — not new internals. Deferred design-list candidates remain (post-MVP):
+- **024A/024B polished the report for demo readability** (no engine/accounting change): an **Executive summary** line (review-exception count, recoverable-denial opportunity, open-appeal-deadline count); clarified summary labels **"Financially balanced"** and **"Total recoverable denied amount"** (024A); and, finalized in 024B, fully business-readable trace phrasing — **"matched with high confidence (10/10)"** in place of the raw `(confidence score N)` form, **"on denial code X and any payer"** in place of raw `scope=[carc=... payer=...]` syntax, **"category: ..., recommended action: ..., owner: ..."** in place of `rule: category=... action=... owner=...`, and **"This matches the recorded recoverable amount."** in place of the raw true/false consistency footer. All underlying audit values (`match_status`, `match_score`, `matched_scope`, `rule_governance`) are preserved unchanged — only surrounding wording changed.
+- **Current validation baseline:** 384 SQL PASS across twenty-six suites (365 + 19 MVP-report checks in `validate_mvp_report.sql` — 14 from 023B, +3 in 024A, +2 in 024B) **plus** the shell MVP-runner smoke test (`tests/validate_mvp_runner.sh`, 10/10 — shell-only, does not affect the SQL count). CI floor is now `MIN_PASS_COUNT: 384`. CI remains green; the MVP report artifact still uploads on every run.
+- **Next: demo review, packaging, and audience feedback** on the finalized MVP report — not new engine internals. Deferred design-list candidates remain (post-MVP):
   - Observation/extraction-driven recovery
   - Reviewer-supplied appeal deadline override (deferred from 019A)
   - Persisted reconcile-time denial-knowledge provenance (deferred 022X — reconciler + migration; would make the `recoverability_trace.consistent` flag fully authoritative)
@@ -37,10 +38,10 @@ Operational handoff. Concise by design.
 - **Active on `push` and `pull_request`** — `.github/workflows/ci.yml`.
 - **Jobs:**
   - `Guardrails / static checks` — `scripts/guards/check_forbidden_refs.sh`, `scripts/guards/check_no_secrets_or_phi.sh`, `scripts/guards/check_action_effects_consistency.sh` (021C), extractor Python unit tests (`extractor/tests/`, 49 tests, stdlib-only).
-  - `Migrations + validation suites` — applies migrations 001–014 in order against a fresh **vanilla `postgres:16`** GitHub Actions service container, registers the reconciler + report functions, runs `tests/run_all_validations.sql`, and asserts zero SQL errors and a PASS count `>= 382` (`MIN_PASS_COUNT`, raised 329→339 in 021C, 339→351 in 022B, 351→365 in 022C, 365→379 in 023B, 379→382 in 024A; fails if the count drops below baseline). A final step runs the **MVP runner smoke test** (`tests/validate_mvp_runner.sh`, 023C) — shell-only, so it does not change `MIN_PASS_COUNT`. A further step (023E) generates the MVP report to a stable path and uploads it as the `financial-truth-mvp-report` CI artifact.
+  - `Migrations + validation suites` — applies migrations 001–014 in order against a fresh **vanilla `postgres:16`** GitHub Actions service container, registers the reconciler + report functions, runs `tests/run_all_validations.sql`, and asserts zero SQL errors and a PASS count `>= 384` (`MIN_PASS_COUNT`, raised 329→339 in 021C, 339→351 in 022B, 351→365 in 022C, 365→379 in 023B, 379→382 in 024A, 382→384 in 024B; fails if the count drops below baseline). A final step runs the **MVP runner smoke test** (`tests/validate_mvp_runner.sh`, 023C) — shell-only, so it does not change `MIN_PASS_COUNT`. A further step (023E) generates the MVP report to a stable path and uploads it as the `financial-truth-mvp-report` CI artifact.
 - **Database strategy:** vanilla Postgres, not Supabase — this schema has no real Supabase dependency (only `pgcrypto`, which ships with the official `postgres` image; `auth.uid()` appears only in a comment, never called; zero `anon`/`authenticated`/`service_role` grants anywhere). Full enumeration in `docs/adr/ADR-001-ci-and-agent-guardrails.md`.
 - **No live AI/API secrets in CI.** No `OPENAI_API_KEY`, no Supabase service-role key, no repository secrets required.
-- Verified green on genuine fresh-database runs (not just locally): baseline `382 PASS, 0 errors, exit 0`, plus `validate_mvp_runner.sh: PASSED (10/10)`, plus the MVP report artifact still uploads.
+- Verified green on genuine fresh-database runs (not just locally): baseline `384 PASS, 0 errors, exit 0`, plus `validate_mvp_runner.sh: PASSED (10/10)`, plus the MVP report artifact still uploads.
 
 ## Agent operating contract (Task 020A)
 - `AGENTS.md` expanded with: Stack, Canonical Commands, Definition of Done, Work Tiers, Stop-and-Ask Rules — in addition to the pre-existing Hard Rules (unchanged, preserved verbatim).
@@ -86,7 +87,10 @@ Operational handoff. Concise by design.
 - **023D/S** — MVP runner documentation (`README.md` Quick Start) + `mvp_output/` gitignore + a state refresh. Docs-only.
 - **023E** — publish the MVP report as a CI artifact (`financial-truth-mvp-report`, `.github/workflows/ci.yml` only) so it can be reviewed without a local disposable-test `DATABASE_URL`. SQL floor unchanged at 379. No SQL/migration/reconciler/explain/accounting change.
 - **024A** — MVP report wording polish: Executive summary line; clarified "Financially balanced" / "Total recoverable denied amount" labels; business-readable trace phrasing ("confidence score", "→ rule: category=... action=... owner=..."), preserving every audit value. `+3` checks in `validate_mvp_report.sql` (14 → 17; CI floor 379 → 382). No migration; no `fte_reconcile.sql`/`fte_explain_claim.sql`/accounting change.
-- **024S** — this state refresh (docs/state only) covering 023E + 024A.
+- **024S** — state refresh (docs/state only) covering 023E + 024A.
+- **025A** — context hygiene practice: `docs/CONTEXT_HYGIENE.md` (durable/ephemeral split, clean-handoff triggers, stop-after-2-failures rule, six-section handoff template), `AGENTS.md` pointer, and a bounded "Known traps / do not repeat" section in this file. Docs-only.
+- **024B** — MVP report wording finalized: "matched with high confidence (10/10)" replaces the raw `(confidence score N)` form; "on denial code X and any payer" replaces raw `scope=[carc=... payer=...]` syntax; "category: ..., recommended action: ..., owner: ..." replaces `rule: category=... action=... owner=...`; "This matches the recorded recoverable amount." replaces the raw true/false consistency footer. `+2` checks in `validate_mvp_report.sql` (17 → 19, including a regression guard against old raw syntax reappearing; CI floor 382 → 384). No migration; no `fte_reconcile.sql`/`fte_explain_claim.sql`/accounting change. **MVP v0.1 is demo-ready.**
+- **024S** — this state refresh (docs/state only) covering the final 024B report-wording polish, baseline 382 → 384.
 
 ## Accounting model notes
 - **Money-moving lifecycle levers:** `record_recovery` and `approve_write_off` only. These reclassify from the gross denied pool.
@@ -117,11 +121,11 @@ Operational handoff. Concise by design.
 - `recoverability_trace` echoes stored vs re-derived `recoverable_amount` with a `consistent` flag (surfaces drift if knowledge is edited after reconcile). **Persisted reconcile-time provenance remains deferred (022X).**
 - **No accounting/status/review-routing/event-emission behavior changed.** Documented in `README_SCHEMA.md` Invariant 19.
 
-## MVP demo (Task 023 arc, polished in 024A)
+## MVP demo (Task 023 arc, finalized in 024A/024B — MVP v0.1 demo-ready)
 - **One command:** `FTE_DB_TARGET_LABEL=disposable-test DATABASE_URL=… scripts/mvp/run_mvp.sh [output_file]` (default output `mvp_output/financial_truth_report.md`, git-ignored).
 - Loads `fixtures/synthetic_mvp_batch.sql` (practice `a4…fe`, 5 claims; denial knowledge is **practice-scoped** with MVP-only CARC codes, so it never contaminates other practices), reconciles, and renders `fte_practice_report` → a markdown/plain-text **Financial Truth Report**.
 - The report shows balanced claims, a short-pay **NEEDS REVIEW** exception, a **recoverable** denial with an **open** appeal deadline, an **expired** one, and the recoverability + appeal-window **trace summaries** (governing rule via `matched_scope`/`match_score`/`rule_governance`).
-- **024A polish (demo readability, no engine change):** an **Executive summary** line near the top (review-exception count, recoverable-denial opportunity, open-appeal-deadline count); clarified summary labels **"Financially balanced"** and **"Total recoverable denied amount"**; trace lines reworded for a business reader ("matched (confidence score N) ... → rule: category=... action=... owner=...") while every audit value (`match_status`, `match_score`, `matched_scope`, `rule_governance`) is preserved unchanged.
+- **024A/024B polish (demo readability, no engine change):** an **Executive summary** line near the top (review-exception count, recoverable-denial opportunity, open-appeal-deadline count); clarified summary labels **"Financially balanced"** and **"Total recoverable denied amount"** (024A); trace lines fully reworded for a business reader (024B, finalized) — **"matched with high confidence (10/10) on denial code X and any payer → category: ..., recommended action: ..., owner: ..."**, and **"This matches the recorded recoverable amount."** in place of the raw true/false footer — while every audit value (`match_status`, `match_score`, `matched_scope`, `rule_governance`) is preserved unchanged. No raw debug syntax (`scope=[...]`, `(confidence score N)`, `rule: category=...`) remains anywhere in the report.
 - **No local DB required to review it:** CI (023E) uploads the generated report as the `financial-truth-mvp-report` GitHub Actions artifact on every run.
 - `fte_claim_report` / `fte_practice_report` are `CREATE OR REPLACE` functions registered by `apply_migrations.sh` — **read-only**; they render existing materialized data and change no accounting/status/event behavior.
 - Safety: refuses unless `FTE_DB_TARGET_LABEL=disposable-test`; requires `DATABASE_URL` but never prints it; synthetic-only, no AI.
@@ -154,7 +158,7 @@ relevant; keep this list short (~10 entries max).
 - The git remote name for this checkout is `origin`, not `github` — verify
   with `git remote -v` before assuming a remote name from another worktree's
   convention.
-- SQL PASS floor is currently 382 (twenty-six suites); the MVP runner shell
+- SQL PASS floor is currently 384 (twenty-six suites); the MVP runner shell
   smoke test (`tests/validate_mvp_runner.sh`, 10/10) is a separate,
   shell-only check that does not contribute to the SQL PASS count.
 - Generated MVP reports belong under `mvp_output/` and are git-ignored — do
