@@ -134,5 +134,31 @@ Operational handoff. Concise by design.
 - Feature branches; push explicitly; validate before review; no merge before validation.
 - CI guard scripts (`scripts/guards/*`) provide a mechanical backstop for secrets/project-ref/legacy-`eob_`/PHI-shaped-fixture checks — they supplement, not replace, review.
 
+## Known traps / do not repeat (Task 025A)
+Bounded list of genuinely discovered environment/tooling gotchas — not a
+restatement of rules already in `AGENTS.md`/`CLAUDE.md`, and not a log of
+every task-level mistake (those stay in ephemeral session handoffs, see
+`docs/CONTEXT_HYGIENE.md`). Compress or remove entries once no longer
+relevant; keep this list short (~10 entries max).
+- Local Bash-tool sessions do not reliably inherit `setx`'d Windows env vars
+  (`DATABASE_URL`, `FTE_DB_TARGET_LABEL`) without a full app/session relaunch
+  — do not assume a newly-set var is visible without re-checking it first.
+- Do not search shell history, profiles, dotfiles, or any credential
+  locations to discover how `DATABASE_URL` was previously configured.
+- If local `DATABASE_URL` setup blocks MVP report review, use the CI
+  artifact path instead (023E: `financial-truth-mvp-report` uploads on every
+  `main`/PR run) rather than spending further time on local env plumbing.
+- Docker is not available for local human/agent use; CI's `postgres:16`
+  service container is the sanctioned exception (runs only inside the CI
+  runner).
+- The git remote name for this checkout is `origin`, not `github` — verify
+  with `git remote -v` before assuming a remote name from another worktree's
+  convention.
+- SQL PASS floor is currently 382 (twenty-six suites); the MVP runner shell
+  smoke test (`tests/validate_mvp_runner.sh`, 10/10) is a separate,
+  shell-only check that does not contribute to the SQL PASS count.
+- Generated MVP reports belong under `mvp_output/` and are git-ignored — do
+  not commit them.
+
 ## Open blockers
 - None.
