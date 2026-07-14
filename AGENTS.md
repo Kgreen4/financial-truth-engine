@@ -117,6 +117,17 @@ For the manual, human-in-the-loop Supabase SQL Editor workflow, see
 
 ---
 
+## Context management
+
+Use `docs/CONTEXT_HYGIENE.md` for context handoff practice. Prefer a clean
+handoff + fresh session over `/compact` when a session's context becomes
+noisy or repetitive. Do not commit live handoff notes unless explicitly
+requested — they live under `../fte_local_artifacts/session_handoffs/` and
+are ephemeral by design. `PROJECT_STATE.md` (including its bounded "Known
+traps / do not repeat" section) remains the durable project truth.
+
+---
+
 ## Definition of Done
 
 A task is done only when all of the following are true:
