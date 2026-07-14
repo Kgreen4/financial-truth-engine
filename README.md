@@ -46,11 +46,19 @@ FTE_DB_TARGET_LABEL=disposable-test DATABASE_URL=postgres://… \
 - **Output:** a Financial Truth Report showing balanced claims, a short-pay claim flagged
   **NEEDS REVIEW**, a **recoverable** denial with an **appeal deadline** (open) and an
   **expired** one, plus the denial-knowledge trace summaries (recoverability + appeal-window)
-  that name the governing rule.
+  that name the governing rule. Task 024A polished the wording for demo readability: an
+  **Executive summary** line up top (review-exception count, recoverable-denial opportunity,
+  open-appeal-deadline count), clarified summary labels (**"Financially balanced"**,
+  **"Total recoverable denied amount"**), and business-readable trace phrasing
+  ("matched (confidence score N) ... → rule: category=... action=... owner=...") — all
+  underlying audit values (match_status, match_score, matched scope, governance
+  category/action/owner) are preserved, unchanged.
 - **Safety:** refuses to run unless `FTE_DB_TARGET_LABEL=disposable-test`; requires
   `DATABASE_URL` but never prints it; synthetic data only.
+- **No local DB needed to review it:** CI (Task 023E) publishes the generated report as a
+  GitHub Actions artifact named `financial-truth-mvp-report` on every run.
 
-**Current validation:** 379 SQL PASS checks across twenty-six suites, plus the MVP runner
+**Current validation:** 382 SQL PASS checks across twenty-six suites, plus the MVP runner
 shell smoke test (`tests/validate_mvp_runner.sh`, 10/10) — all green in CI on a fresh
 `postgres:16` database. Generated reports land under `mvp_output/` (git-ignored).
 
