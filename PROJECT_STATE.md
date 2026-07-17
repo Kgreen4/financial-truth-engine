@@ -4,7 +4,7 @@ Operational handoff. Concise by design.
 
 ## Repository
 - **Repo:** `Kgreen4/financial-truth-engine`
-- **main HEAD:** `2d14ef1` (Task 024B merged)
+- **main HEAD:** `cc9155b` or newer (Task 024S final MVP state refresh; RCM-SETUP-001 follows)
 - FTE now lives at the **repository root** — formerly the `financial-truth-engine/` subdirectory of `n2n-portal`, promoted to root on import.
 - **Do not use `Kgreen4/n2n-portal` for FTE anymore.** That repo is the separate **client / exodus** project and is not part of FTE.
 
@@ -16,6 +16,7 @@ Operational handoff. Concise by design.
 - `scripts/guards/` — `check_forbidden_refs.sh`, `check_no_secrets_or_phi.sh`, `check_action_effects_consistency.sh`
 - `scripts/mvp/` — `run_mvp.sh` (one-command MVP demo → Financial Truth Report)
 - `.github/workflows/ci.yml` — CI workflow (push + pull_request)
+- `docs/agent_reviews/` — shared review queue for Claude/Codex/Keith collaboration (`claude/`, `codex/`, `resolved/`)
 - `docs/adr/` — architecture decision records (ADR-001: CI and agent guardrails)
 - `AGENTS.md` — standing agent operating contract; `CLAUDE.md` — pointer to `AGENTS.md`
 - `README.md`, `README_SCHEMA.md`, `NEXT_STEPS.md`
@@ -26,6 +27,8 @@ Operational handoff. Concise by design.
 - **The MVP is demonstrable with one command:** `scripts/mvp/run_mvp.sh` loads the synthetic MVP batch, reconciles, and writes a human-readable **Financial Truth Report** (balanced claims, a short-pay review exception, a recoverable denial with an open appeal deadline, an expired one, and denial-knowledge trace summaries). Proven in CI on a fresh database. CI (023E) also publishes the generated report as a GitHub Actions artifact (`financial-truth-mvp-report`), so it can be reviewed without a local disposable-test `DATABASE_URL`.
 - **024A/024B polished the report for demo readability** (no engine/accounting change): an **Executive summary** line (review-exception count, recoverable-denial opportunity, open-appeal-deadline count); clarified summary labels **"Financially balanced"** and **"Total recoverable denied amount"** (024A); and, finalized in 024B, fully business-readable trace phrasing — **"matched with high confidence (10/10)"** in place of the raw `(confidence score N)` form, **"on denial code X and any payer"** in place of raw `scope=[carc=... payer=...]` syntax, **"category: ..., recommended action: ..., owner: ..."** in place of `rule: category=... action=... owner=...`, and **"This matches the recorded recoverable amount."** in place of the raw true/false consistency footer. All underlying audit values (`match_status`, `match_score`, `matched_scope`, `rule_governance`) are preserved unchanged — only surrounding wording changed.
 - **Current validation baseline:** 384 SQL PASS across twenty-six suites (365 + 19 MVP-report checks in `validate_mvp_report.sql` — 14 from 023B, +3 in 024A, +2 in 024B) **plus** the shell MVP-runner smoke test (`tests/validate_mvp_runner.sh`, 10/10 — shell-only, does not affect the SQL count). CI floor is now `MIN_PASS_COUNT: 384`. CI remains green; the MVP report artifact still uploads on every run.
+- **Active client-delivery work (RCM-SETUP-001): First Paid RCM Revenue Leak Audit.** A cardiology practice client has agreed to the founder audit offer (no client name, no PHI in repo). Invoice has been sent; export checklist has been sent; awaiting Ethizo / clearinghouse / deposit-log export headers or de-identified samples. Current RCM docs: `docs/RCM_OVERSIGHT_AUDIT_PLAN.md`, `docs/RCM_30_DAY_DELIVERY_PLAN.md`, `docs/RCM_EXPORT_REQUEST_CHECKLIST.md`, and empty header-only template `docs/RCM_EXPORT_FIELD_MAP.md`.
+- **Dual-agent operating model:** Claude reviews pushed GitHub artifacts and product/report clarity; Codex implements locally in the repo; Keith approves scope, client-facing conclusions, and any findings before implementation or delivery. Shared review folders live under `docs/agent_reviews/` (`claude/`, `codex/`, `resolved/`) with `.gitkeep` markers and README guidance.
 - **Next: demo review, packaging, and audience feedback** on the finalized MVP report — not new engine internals. Deferred design-list candidates remain (post-MVP):
   - Observation/extraction-driven recovery
   - Reviewer-supplied appeal deadline override (deferred from 019A)
